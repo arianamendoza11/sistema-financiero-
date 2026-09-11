@@ -1,0 +1,33 @@
+name: Ingesta Estandarizada
+
+on:
+  repository_dispatch:
+    types: [ingesta_estandarizada]
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Ejecutar ingesta
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          TIPO_INGESTA: ${{ github.event.client_payload.tipo_ingesta }}
+          FECHA: ${{ github.event.client_payload.fecha }}
+          MONTO: ${{ github.event.client_payload.monto }}
+          CUENTA: ${{ github.event.client_payload.cuenta }}
+          COMENTARIO: ${{ github.event.client_payload.comentario }}
+        run: python scripts/ingesta_estandarizada.py
