@@ -14,12 +14,12 @@ import json
 import os
 import sys
 
-import requests
-
-SUPABASE_URL = os.environ["SUPABASE_URL"].rstrip("/")
-SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-TELEGRAM_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+from motor_supabase import (
+    notificar_telegram,
+    resolver_categoria,
+    resolver_id_cuenta_por_nombre,
+    insertar_filas,
+)
 
 TIPO_INGESTA = os.environ.get("TIPO_INGESTA") or None
 FECHA = os.environ.get("FECHA") or None
@@ -30,21 +30,6 @@ COMENTARIO_SHORTCUT = os.environ.get("COMENTARIO") or None
 PLANTILLAS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "plantillas_estandarizadas.json"
 )
-
-REST_HEADERS = {
-    "apikey": SERVICE_KEY,
-    "Authorization": f"Bearer {SERVICE_KEY}",
-    "Content-Type": "application/json",
-    "Prefer": "return=representation",
-}
-
-
-def notificar_telegram(texto):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": texto}, timeout=10)
-    except requests.RequestException:
-        pass  # si Telegram falla, no debe tapar el error original
 
 
 def error_salir(mensaje):
@@ -70,20 +55,11 @@ def cargar_version_vigente(tipo_ingesta, fecha):
     error_salir(f"No hay version vigente de la plantilla '{tipo_ingesta}' para la fecha {fecha}")
 
 
-def resolver_categoria(codigo_categoria, fecha):
-    url = f"{SUPABASE_URL}/rest/v1/categorias"
-    params = {
-        "codigo_categoria": f"eq.{codigo_categoria}",
-        "fecha_inicio": f"lte.{fecha}",
-        "or": f"(fecha_fin.is.null,fecha_fin.gte.{fecha})",
-        "select": "id_categoria,tipo,glosa",
-    }
-    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
-    r.raise_for_status()
-    filas = r.json()
-    if not filas:
+def resolver_categoria_o_falla(codigo_categoria, fecha):
+    categoria = resolver_categoria(codigo_categoria, fecha)
+    if categoria is None:
         error_salir(f"No hay version vigente de la categoria '{codigo_categoria}' para la fecha {fecha}")
-    return filas[0]
+    return categoria
 
 
 def calcular_comentario(version, categoria):
@@ -120,27 +96,19 @@ def resolver_monto(version):
     return abs(float(MONTO)) * version["signo"]
 
 
-def resolver_id_cuenta_por_nombre(nombre_cuenta):
-    url = f"{SUPABASE_URL}/rest/v1/cuentas"
-    params = {"nombre_cuenta": f"eq.{nombre_cuenta}", "select": "id_cuenta"}
-    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
-    r.raise_for_status()
-    filas = r.json()
-    if not filas:
-        error_salir(f"No existe ninguna cuenta llamada '{nombre_cuenta}'")
-    return filas[0]["id_cuenta"]
-
-
 def resolver_cuenta(id_cuenta_plantilla):
     if id_cuenta_plantilla is not None:
         return id_cuenta_plantilla
     if not CUENTA_SHORTCUT:
         error_salir("Este tipo de ingesta requiere 'cuenta' (nombre, ej. 'BBVA Esp') desde el Shortcut y no llego")
-    return resolver_id_cuenta_por_nombre(CUENTA_SHORTCUT)
+    id_cuenta = resolver_id_cuenta_por_nombre(CUENTA_SHORTCUT)
+    if id_cuenta is None:
+        error_salir(f"No existe ninguna cuenta llamada '{CUENTA_SHORTCUT}'")
+    return id_cuenta
 
 
 def construir_fila_simple(version, fecha):
-    categoria = resolver_categoria(version["codigo_categoria"], fecha)
+    categoria = resolver_categoria_o_falla(version["codigo_categoria"], fecha)
     return {
         "nombre_operacion": version["nombre_operacion"],
         "importe": resolver_monto(version),
@@ -158,7 +126,7 @@ def construir_filas_ahorro(version, fecha):
         error_salir("El ahorro requiere 'monto' desde el Shortcut y no llego")
     monto = abs(float(MONTO))
 
-    categoria = resolver_categoria(version["codigo_categoria"], fecha)
+    categoria = resolver_categoria_o_falla(version["codigo_categoria"], fecha)
     comentario = calcular_comentario(version, categoria)
 
     filas = []
@@ -176,14 +144,6 @@ def construir_filas_ahorro(version, fecha):
     return filas
 
 
-def insertar_filas(filas):
-    url = f"{SUPABASE_URL}/rest/v1/seguimiento_efectivo"
-    r = requests.post(url, headers=REST_HEADERS, json=filas, timeout=15)
-    if not r.ok:
-        error_salir(f"Supabase rechazo el insert ({r.status_code}): {r.text}")
-    return r.json()
-
-
 def main():
     if not TIPO_INGESTA:
         error_salir("Falta 'tipo_ingesta' en el payload")
@@ -198,7 +158,11 @@ def main():
         filas = [construir_fila_simple(version, FECHA)]
 
     resultado = insertar_filas(filas)
-    ids = ", ".join(fila["id_operacion"] for fila in resultado)
+    if not resultado.ok:
+        error_salir(f"Supabase rechazo el insert ({resultado.status_code}): {resultado.text}")
+
+    filas_insertadas = resultado.json()
+    ids = ", ".join(fila["id_operacion"] for fila in filas_insertadas)
     notificar_telegram(f"✅ Ingesta '{TIPO_INGESTA}' registrada: {ids}")
     print(f"OK: {ids}")
 
