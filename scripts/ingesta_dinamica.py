@@ -81,16 +81,65 @@ Glosario de referencia (sugestivo, no exhaustivo):
 Lineas a clasificar:
 {items_texto}
 """
-    try:
-        resultado = llamar_gemini_json([{"text": prompt}], GEMINI_API_KEY)
-    except RuntimeError as e:
-        error_salir(str(e))
+    resultado = llamar_gemini_json([{"text": prompt}], GEMINI_API_KEY)  # deja propagar RuntimeError - main() decide el fallback
 
     etiquetas = resultado.get("etiquetas")
     if not isinstance(etiquetas, list) or len(etiquetas) != len(lineas):
         error_salir(f"Gemini devolvio {etiquetas!r}, se esperaban {len(lineas)} etiqueta(s)")
 
     return etiquetas
+
+
+def construir_sql_fallback(lineas, id_cuenta, fecha, etiquetas_activas):
+    """Cuando Gemini esta caido, arma un INSERT manual con todo ya resuelto
+    (cuenta, categoria, signo) excepto la etiqueta - eso queda como
+    instruccion + la lista real de etiquetas activas, para completarlo a
+    mano (Supabase MCP, o pegado en cualquier chat con esa capacidad)."""
+    filas_sql = []
+    for linea in lineas:
+        codigo_categoria = linea.get("categoria")
+        importe = linea.get("importe")
+        if not codigo_categoria or importe is None:
+            continue
+
+        categoria = resolver_categoria(codigo_categoria, fecha)
+        if categoria is None:
+            continue
+
+        signo = resolver_signo(categoria["tipo"])
+        if signo is None:
+            continue
+
+        nombre_operacion = (linea.get("nombre_operacion") or codigo_categoria).replace("'", "''")
+        comentario = linea.get("comentario")
+        comentario_sql = "'{}'".format(comentario.replace("'", "''")) if comentario else "NULL"
+        importe_final = abs(float(importe)) * signo
+
+        filas_sql.append(
+            "  ('{nombre}', {importe}, '{fecha}', '{cuenta}', '{categoria}', "
+            "(SELECT id_etiqueta FROM etiquetas WHERE nombre_etiqueta = '<<ELEGIR>>'), "
+            "{comentario}, '{tipo}')".format(
+                nombre=nombre_operacion,
+                importe=importe_final,
+                fecha=fecha,
+                cuenta=id_cuenta,
+                categoria=categoria["id_categoria"],
+                comentario=comentario_sql,
+                tipo=categoria["tipo"],
+            )
+        )
+
+    if not filas_sql:
+        return None
+
+    return (
+        "-- Reemplaza cada <<ELEGIR>> por el nombre EXACTO de la etiqueta que mejor\n"
+        "-- encaje, elegida de esta lista de etiquetas activas:\n"
+        "-- " + ", ".join(etiquetas_activas) + "\n"
+        "INSERT INTO seguimiento_efectivo\n"
+        "  (nombre_operacion, importe, fecha_operacion, id_cuenta, id_categoria, id_etiqueta, comentario, tipo)\n"
+        "VALUES\n" + ",\n".join(filas_sql) + ";"
+    )
 
 
 def construir_fila(linea, id_cuenta, fecha, nombre_etiqueta):
@@ -152,7 +201,17 @@ def main():
 
     etiquetas_activas = listar_etiquetas_activas()
     glosario_texto = leer_glosario()
-    etiquetas_asignadas = resolver_etiquetas_ia(lineas, etiquetas_activas, glosario_texto)
+
+    try:
+        etiquetas_asignadas = resolver_etiquetas_ia(lineas, etiquetas_activas, glosario_texto)
+    except RuntimeError as e:
+        sql_fallback = construir_sql_fallback(lineas, id_cuenta, fecha, etiquetas_activas)
+        mensaje = f"❌ Gasto dinamico fallido: {e}"
+        if sql_fallback:
+            mensaje += "\n------------------------------------------\n" + sql_fallback
+        notificar_telegram(mensaje)
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
 
     filas = [
         construir_fila(linea, id_cuenta, fecha, etiqueta)
