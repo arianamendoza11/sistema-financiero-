@@ -14,7 +14,7 @@ from motor_supabase import (
 )
 
 BUCKET = "recibos"
-RETENCION_DIAS = 0  # TEMPORAL: limpieza manual de fotos de prueba, revertir a 1
+RETENCION_DIAS = 1
 
 
 def main():
