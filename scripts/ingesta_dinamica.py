@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 Gasto dinamico: NFC o Hub Manual mandan una cuenta compartida, opcionalmente
-una fecha, y 1-3 lineas de gasto (importe + categoria + etiqueta elegidos
-libremente, no vienen de una plantilla fija). Cada linea se resuelve contra
-Supabase igual que la ingesta estandarizada (misma vigencia SCD2 de
-categorias, mismo trigger de medio_pago) y se inserta en un solo INSERT
-atomico.
+una fecha, y 1-3 lineas de gasto (importe + categoria + un texto corto que
+describe la compra). La categoria la elige Diego en el Shortcut (afecta
+presupuesto). La etiqueta NO se pide en el Shortcut - una lista de 41
+etiquetas activas es inmostrable en pantalla de celular - la resuelve Gemini
+(solo texto, sin imagen) a partir de la categoria + el texto, igual que en
+la rama "con foto" pero sin OCR de por medio. Es barato de corregir si se
+equivoca, por eso se delega.
 
 Si no llega 'fecha' se usa la fecha de ejecucion del workflow (hora de
 Madrid) - pensado para NFC, que se dispara en el instante exacto del pago y
@@ -24,8 +26,12 @@ from motor_supabase import (
     resolver_id_etiqueta_por_nombre,
     resolver_signo,
     insertar_filas,
+    listar_etiquetas_activas,
+    leer_glosario,
+    llamar_gemini_json,
 )
 
+GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 CUENTA_SHORTCUT = os.environ.get("CUENTA") or None
 FECHA_SHORTCUT = os.environ.get("FECHA") or None
 LINEAS_RAW = os.environ.get("LINEAS") or None
@@ -45,13 +51,54 @@ def resolver_fecha():
     return datetime.now(MADRID).date().isoformat()
 
 
-def construir_fila(linea, id_cuenta, fecha):
+def resolver_etiquetas_ia(lineas, etiquetas_activas, glosario_texto):
+    """Una sola llamada a Gemini (solo texto) que devuelve una etiqueta por
+    cada linea, en el mismo orden. La categoria ya la eligio Diego - esto
+    solo cubre lo barato de corregir (la etiqueta)."""
+    items_texto = "\n".join(
+        f'{i + 1}. categoria="{l.get("categoria")}" texto="{l.get("nombre_operacion")}"'
+        for i, l in enumerate(lineas)
+    )
+    prompt = f"""Eres el motor de clasificacion de etiquetas de un sistema financiero personal.
+
+Para cada linea de gasto (categoria ya elegida por el usuario + un texto corto que describe la compra), elige la etiqueta que mejor encaje.
+
+Devuelve EXCLUSIVAMENTE un JSON (sin markdown, sin texto fuera del JSON) con esta forma:
+{{"etiquetas": ["etiqueta linea 1", "etiqueta linea 2"]}}
+
+El array debe tener EXACTAMENTE {len(lineas)} elemento(s), en el mismo orden que las lineas de entrada.
+
+Reglas:
+- Cada etiqueta debe ser EXACTAMENTE uno de los valores permitidos abajo. Nunca inventes una que no este en la lista.
+- Usa la categoria como contexto, pero clasifica por lo que ES la compra descrita en el texto.
+- Si el texto no aparece en el glosario de referencia, usa tu propio criterio semantico para elegir la que mejor encaje - nunca dejes una linea sin clasificar.
+
+Etiquetas permitidas: {', '.join(etiquetas_activas)}
+
+Glosario de referencia (sugestivo, no exhaustivo):
+{glosario_texto}
+
+Lineas a clasificar:
+{items_texto}
+"""
+    try:
+        resultado = llamar_gemini_json([{"text": prompt}], GEMINI_API_KEY)
+    except RuntimeError as e:
+        error_salir(str(e))
+
+    etiquetas = resultado.get("etiquetas")
+    if not isinstance(etiquetas, list) or len(etiquetas) != len(lineas):
+        error_salir(f"Gemini devolvio {etiquetas!r}, se esperaban {len(lineas)} etiqueta(s)")
+
+    return etiquetas
+
+
+def construir_fila(linea, id_cuenta, fecha, nombre_etiqueta):
     codigo_categoria = linea.get("categoria")
-    nombre_etiqueta = linea.get("etiqueta")
     importe = linea.get("importe")
 
-    if not codigo_categoria or not nombre_etiqueta or importe is None:
-        error_salir(f"Linea incompleta, falta categoria/etiqueta/importe: {linea}")
+    if not codigo_categoria or importe is None:
+        error_salir(f"Linea incompleta, falta categoria/importe: {linea}")
 
     categoria = resolver_categoria(codigo_categoria, fecha)
     if categoria is None:
@@ -59,7 +106,7 @@ def construir_fila(linea, id_cuenta, fecha):
 
     id_etiqueta = resolver_id_etiqueta_por_nombre(nombre_etiqueta)
     if id_etiqueta is None:
-        error_salir(f"No existe ninguna etiqueta llamada '{nombre_etiqueta}'")
+        error_salir(f"La IA devolvio etiqueta '{nombre_etiqueta}' que no existe")
 
     signo = resolver_signo(categoria["tipo"])
     if signo is None:
@@ -103,7 +150,14 @@ def main():
 
     fecha = resolver_fecha()
 
-    filas = [construir_fila(linea, id_cuenta, fecha) for linea in lineas]
+    etiquetas_activas = listar_etiquetas_activas()
+    glosario_texto = leer_glosario()
+    etiquetas_asignadas = resolver_etiquetas_ia(lineas, etiquetas_activas, glosario_texto)
+
+    filas = [
+        construir_fila(linea, id_cuenta, fecha, etiqueta)
+        for linea, etiqueta in zip(lineas, etiquetas_asignadas)
+    ]
 
     resultado = insertar_filas(filas)
     if not resultado.ok:

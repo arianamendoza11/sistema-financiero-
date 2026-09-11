@@ -42,6 +42,9 @@ from motor_supabase import (
     resolver_id_etiqueta_por_nombre,
     resolver_signo,
     insertar_filas,
+    listar_etiquetas_activas,
+    leer_glosario,
+    llamar_gemini_json,
 )
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
@@ -50,9 +53,7 @@ FOTO_PATH = os.environ.get("FOTO_PATH") or None
 CATEGORIAS_RAW = os.environ.get("CATEGORIAS_PERMITIDAS") or None
 
 MADRID = ZoneInfo("Europe/Madrid")
-GLOSARIO_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "glosario_ocr_recibos.md")
 MAX_LINEAS = 60  # un ticket real no supera esto, es solo un limite de cordura
-MODELO_GEMINI = "gemini-3.8-flash"
 
 
 def error_salir(mensaje):
@@ -81,14 +82,6 @@ def resolver_categorias_permitidas(codigos, fecha):
             error_salir(f"La categoria preseleccionada '{codigo}' no tiene version vigente para la fecha {fecha}")
         resueltas[codigo] = categoria
     return resueltas
-
-
-def listar_etiquetas_activas():
-    url_et = f"{SUPABASE_URL}/rest/v1/etiquetas"
-    params_et = {"estado": "eq.activa", "select": "nombre_etiqueta"}
-    r = requests.get(url_et, headers=REST_HEADERS, params=params_et, timeout=15)
-    r.raise_for_status()
-    return sorted({fila["nombre_etiqueta"] for fila in r.json()})
 
 
 def construir_prompt(categorias_permitidas, etiquetas, glosario_texto):
@@ -137,30 +130,14 @@ Glosario de referencia (sugestivo, no exhaustivo):
 
 
 def llamar_gemini(imagen_bytes, prompt):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_GEMINI}:generateContent?key={GEMINI_API_KEY}"
-    body = {
-        "contents": [{
-            "parts": [
-                {"text": prompt},
-                {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(imagen_bytes).decode()}},
-            ]
-        }],
-        "generationConfig": {"responseMimeType": "application/json"},
-    }
-    r = requests.post(url, json=body, timeout=60)
-    if not r.ok:
-        error_salir(f"Gemini rechazo la peticion ({r.status_code}): {r.text}")
-
-    data = r.json()
+    parts = [
+        {"text": prompt},
+        {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(imagen_bytes).decode()}},
+    ]
     try:
-        texto = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        error_salir(f"Respuesta de Gemini con forma inesperada: {data}")
-
-    try:
-        return json.loads(texto)
-    except json.JSONDecodeError:
-        error_salir(f"Gemini no devolvio JSON valido: {texto}")
+        return llamar_gemini_json(parts, GEMINI_API_KEY)
+    except RuntimeError as e:
+        error_salir(str(e))
 
 
 def construir_fila(linea, id_cuenta, fecha, categorias_dict):
@@ -225,9 +202,7 @@ def main():
 
     categorias_dict = resolver_categorias_permitidas(codigos_categoria, hoy)
     etiquetas = listar_etiquetas_activas()
-
-    with open(GLOSARIO_PATH, encoding="utf-8") as f:
-        glosario_texto = f.read()
+    glosario_texto = leer_glosario()
 
     imagen_bytes = descargar_foto(FOTO_PATH)
     prompt = construir_prompt(list(categorias_dict), etiquetas, glosario_texto)

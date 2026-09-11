@@ -102,3 +102,49 @@ def borrar_objetos_storage(bucket, nombres):
     bucket) de Supabase Storage. Devuelve la respuesta cruda de requests."""
     url = f"{SUPABASE_URL}/storage/v1/object/{bucket}"
     return requests.delete(url, headers=REST_HEADERS, json={"prefixes": nombres}, timeout=15)
+
+
+def listar_etiquetas_activas():
+    """Vocabulario vigente de etiquetas (consultado en vivo, nunca hardcodeado)."""
+    url = f"{SUPABASE_URL}/rest/v1/etiquetas"
+    params = {"estado": "eq.activa", "select": "nombre_etiqueta"}
+    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
+    r.raise_for_status()
+    return sorted({fila["nombre_etiqueta"] for fila in r.json()})
+
+
+GLOSARIO_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "glosario_ocr_recibos.md")
+
+
+def leer_glosario():
+    with open(GLOSARIO_PATH, encoding="utf-8") as f:
+        return f.read()
+
+
+MODELO_GEMINI = "gemini-3.8-flash"
+
+
+def llamar_gemini_json(parts, api_key):
+    """Llama a Gemini generateContent con las 'parts' ya armadas por el
+    caller (solo texto, o texto+imagen) y devuelve el JSON parseado. Lanza
+    RuntimeError con un mensaje claro si algo falla - cada script decide como
+    reportarlo con su propio error_salir/Telegram."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_GEMINI}:generateContent?key={api_key}"
+    body = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {"responseMimeType": "application/json"},
+    }
+    r = requests.post(url, json=body, timeout=60)
+    if not r.ok:
+        raise RuntimeError(f"Gemini rechazo la peticion ({r.status_code}): {r.text}")
+
+    data = r.json()
+    try:
+        texto = data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError):
+        raise RuntimeError(f"Respuesta de Gemini con forma inesperada: {data}")
+
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError:
+        raise RuntimeError(f"Gemini no devolvio JSON valido: {texto}")
