@@ -7,6 +7,7 @@ ingesta_dinamica, etc).
 """
 import json
 import os
+import time
 
 import requests
 
@@ -124,17 +125,32 @@ def leer_glosario():
 MODELO_GEMINI = "gemini-3.8-flash"
 
 
+REINTENTOS_503 = 3
+ESPERA_ENTRE_REINTENTOS_SEG = 5
+
+
 def llamar_gemini_json(parts, api_key):
     """Llama a Gemini generateContent con las 'parts' ya armadas por el
     caller (solo texto, o texto+imagen) y devuelve el JSON parseado. Lanza
     RuntimeError con un mensaje claro si algo falla - cada script decide como
-    reportarlo con su propio error_salir/Telegram."""
+    reportarlo con su propio error_salir/Telegram.
+
+    Reintenta solo ante 503 (servidores de Google saturados, transitorio y
+    le pasa igual a free que a pago) - cualquier otro codigo falla directo,
+    reintentar no lo arregla."""
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_GEMINI}:generateContent?key={api_key}"
     body = {
         "contents": [{"parts": parts}],
         "generationConfig": {"responseMimeType": "application/json"},
     }
-    r = requests.post(url, json=body, timeout=60)
+
+    r = None
+    for intento in range(1, REINTENTOS_503 + 1):
+        r = requests.post(url, json=body, timeout=60)
+        if r.ok or r.status_code != 503 or intento == REINTENTOS_503:
+            break
+        time.sleep(ESPERA_ENTRE_REINTENTOS_SEG)
+
     if not r.ok:
         raise RuntimeError(f"Gemini rechazo la peticion ({r.status_code}): {r.text}")
 
