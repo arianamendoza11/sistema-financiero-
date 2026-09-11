@@ -122,7 +122,7 @@ def leer_glosario():
         return f.read()
 
 
-MODELO_GEMINI = "gemini-3.8-flash"
+MODELO_GEMINI = "gemini-3.8-flash-TEST-FALLBACK-TEMPORAL"
 
 
 REINTENTOS_503 = 3
