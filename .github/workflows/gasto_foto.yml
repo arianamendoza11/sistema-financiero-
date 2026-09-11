@@ -28,4 +28,5 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CUENTA: ${{ github.event.client_payload.cuenta }}
           FOTO_PATH: ${{ github.event.client_payload.foto_bucket_path }}
+          CATEGORIAS_PERMITIDAS: ${{ toJson(github.event.client_payload.categorias) }}
         run: python scripts/ingesta_foto.py
