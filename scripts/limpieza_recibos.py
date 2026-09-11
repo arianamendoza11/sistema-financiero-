@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Limpieza del bucket 'recibos': corre una vez al dia (cron) y borra solo los
-objetos con mas de RETENCION_DIAS de antiguedad. Existe una ventana minima de
-retencion (no se borra nada el mismo dia que se sube) para poder corregir un
-insert erroneo antes de perder la foto de referencia.
+Limpieza del bucket 'recibos': corre cada 2 dias (cron) y borra solo los
+objetos con mas de RETENCION_DIAS de antiguedad. 7 dias de ventana le da
+tiempo de sobra al cron de reintentar_fotos_pendientes.py (corre cada
+noche) para resolver un fallo de Gemini antes de perder la foto.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -14,7 +14,7 @@ from motor_supabase import (
 )
 
 BUCKET = "recibos"
-RETENCION_DIAS = 1
+RETENCION_DIAS = 7
 
 
 def main():

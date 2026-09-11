@@ -20,6 +20,11 @@ Diseño de responsabilidades (para que la IA nunca pueda romper presupuesto):
   se le pide a la IA que la lea del ticket: un NFC se dispara en el instante
   exacto del pago, no hay nada que inferir ni que preguntar.
 
+La logica real vive en procesar_foto() - no llama a error_salir ni hace
+sys.exit, solo lanza excepciones. Esto permite que la reuse tanto main()
+(disparo normal via Shortcut/GitHub) como reintentar_fotos_pendientes.py
+(cron nocturno que reprocesa fallos de Gemini) sin duplicar nada.
+
 Sin RUN2, sin botones, sin webhook: se inserta directo y Telegram notifica
 el resultado. Si algo sale mal se corrige a mano despues (via Supabase MCP),
 igual que el resto del sistema.
@@ -45,6 +50,8 @@ from motor_supabase import (
     listar_etiquetas_activas,
     leer_glosario,
     llamar_gemini_json,
+    guardar_foto_pendiente,
+    borrar_foto_pendiente,
 )
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
@@ -56,17 +63,18 @@ MADRID = ZoneInfo("Europe/Madrid")
 MAX_LINEAS = 60  # un ticket real no supera esto, es solo un limite de cordura
 
 
-def error_salir(mensaje):
-    notificar_telegram(f"❌ Ingesta de foto fallida: {mensaje}")
-    print(f"ERROR: {mensaje}", file=sys.stderr)
-    sys.exit(1)
+class FotoNoEncontrada(RuntimeError):
+    """La foto ya no existe en Storage (se cumplio la retencion antes de
+    poder procesarla) - no tiene sentido seguir reintentando esta."""
 
 
 def descargar_foto(path):
     url = f"{SUPABASE_URL}/storage/v1/object/{path}"
     r = requests.get(url, headers=REST_HEADERS, timeout=30)
+    if r.status_code == 404:
+        raise FotoNoEncontrada(f"La foto '{path}' ya no existe en Supabase Storage")
     if not r.ok:
-        error_salir(f"No se pudo descargar la foto '{path}' de Supabase Storage ({r.status_code}): {r.text}")
+        raise RuntimeError(f"No se pudo descargar la foto '{path}' de Supabase Storage ({r.status_code}): {r.text}")
     return r.content
 
 
@@ -79,7 +87,7 @@ def resolver_categorias_permitidas(codigos, fecha):
     for codigo in codigos:
         categoria = resolver_categoria(codigo, fecha)
         if categoria is None:
-            error_salir(f"La categoria preseleccionada '{codigo}' no tiene version vigente para la fecha {fecha}")
+            raise RuntimeError(f"La categoria preseleccionada '{codigo}' no tiene version vigente para la fecha {fecha}")
         resueltas[codigo] = categoria
     return resueltas
 
@@ -134,10 +142,7 @@ def llamar_gemini(imagen_bytes, prompt):
         {"text": prompt},
         {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(imagen_bytes).decode()}},
     ]
-    try:
-        return llamar_gemini_json(parts, GEMINI_API_KEY)
-    except RuntimeError as e:
-        error_salir(str(e))
+    return llamar_gemini_json(parts, GEMINI_API_KEY)  # deja propagar RuntimeError
 
 
 def construir_fila(linea, id_cuenta, fecha, categorias_dict):
@@ -146,22 +151,22 @@ def construir_fila(linea, id_cuenta, fecha, categorias_dict):
     importe = linea.get("importe")
 
     if not codigo_categoria or not nombre_etiqueta or importe is None:
-        error_salir(f"Linea incompleta devuelta por la IA: {linea}")
+        raise RuntimeError(f"Linea incompleta devuelta por la IA: {linea}")
 
     categoria = categorias_dict.get(codigo_categoria)
     if categoria is None:
-        error_salir(
+        raise RuntimeError(
             f"La IA devolvio categoria '{codigo_categoria}' que no esta en la lista preseleccionada "
             f"({', '.join(categorias_dict)})"
         )
 
     id_etiqueta = resolver_id_etiqueta_por_nombre(nombre_etiqueta)
     if id_etiqueta is None:
-        error_salir(f"La IA devolvio etiqueta '{nombre_etiqueta}' que no existe")
+        raise RuntimeError(f"La IA devolvio etiqueta '{nombre_etiqueta}' que no existe")
 
     signo = resolver_signo(categoria["tipo"])
     if signo is None:
-        error_salir(
+        raise RuntimeError(
             f"La categoria '{codigo_categoria}' es de tipo '{categoria['tipo']}', "
             "que no se puede registrar en una sola linea (ej. un traspaso necesita 2 filas ligadas)"
         )
@@ -178,25 +183,13 @@ def construir_fila(linea, id_cuenta, fecha, categorias_dict):
     }
 
 
-def main():
-    if not CUENTA_SHORTCUT:
-        error_salir("Falta 'cuenta' en el payload")
-    if not FOTO_PATH:
-        error_salir("Falta 'foto_bucket_path' en el payload")
-    if not CATEGORIAS_RAW:
-        error_salir("Falta 'categorias' (preseleccionadas en el Shortcut) en el payload")
-
-    try:
-        codigos_categoria = json.loads(CATEGORIAS_RAW)
-    except json.JSONDecodeError:
-        error_salir(f"'categorias' no es JSON valido: {CATEGORIAS_RAW}")
-
-    if not isinstance(codigos_categoria, list) or not codigos_categoria:
-        error_salir(f"'categorias' debe ser una lista no vacia, llego: {codigos_categoria}")
-
-    id_cuenta = resolver_id_cuenta_por_nombre(CUENTA_SHORTCUT)
+def procesar_foto(cuenta_nombre, codigos_categoria, foto_path):
+    """Hace todo el trabajo real. Devuelve (filas_insertadas, comercio,
+    fecha) en exito. Lanza FotoNoEncontrada o RuntimeError en fallo - nunca
+    llama a Telegram ni hace sys.exit, eso lo decide el llamador."""
+    id_cuenta = resolver_id_cuenta_por_nombre(cuenta_nombre)
     if id_cuenta is None:
-        error_salir(f"No existe ninguna cuenta llamada '{CUENTA_SHORTCUT}'")
+        raise RuntimeError(f"No existe ninguna cuenta llamada '{cuenta_nombre}'")
 
     hoy = datetime.now(MADRID).date().isoformat()
 
@@ -204,34 +197,73 @@ def main():
     etiquetas = listar_etiquetas_activas()
     glosario_texto = leer_glosario()
 
-    imagen_bytes = descargar_foto(FOTO_PATH)
+    imagen_bytes = descargar_foto(foto_path)
     prompt = construir_prompt(list(categorias_dict), etiquetas, glosario_texto)
     resultado_ia = llamar_gemini(imagen_bytes, prompt)
 
     lineas_ia = resultado_ia.get("lineas") or []
-
     if not (1 <= len(lineas_ia) <= MAX_LINEAS):
-        error_salir(f"La IA devolvio {len(lineas_ia)} lineas, fuera del rango valido 1-{MAX_LINEAS}")
+        raise RuntimeError(f"La IA devolvio {len(lineas_ia)} lineas, fuera del rango valido 1-{MAX_LINEAS}")
 
     filas = [construir_fila(linea, id_cuenta, hoy, categorias_dict) for linea in lineas_ia]
 
     resultado = insertar_filas(filas)
     if not resultado.ok:
-        error_salir(f"Supabase rechazo el insert ({resultado.status_code}): {resultado.text}")
+        raise RuntimeError(f"Supabase rechazo el insert ({resultado.status_code}): {resultado.text}")
 
-    filas_insertadas = resultado.json()
-    ids = ", ".join(fila["id_operacion"] for fila in filas_insertadas)
     comercio = resultado_ia.get("comercio") or "comercio no identificado"
+    return resultado.json(), comercio, hoy
+
+
+def notificar_exito(filas_insertadas, comercio, fecha):
+    ids = ", ".join(fila["id_operacion"] for fila in filas_insertadas)
     total = sum(abs(float(fila["importe"])) for fila in filas_insertadas)
     resumen = "\n".join(f"  - {fila['nombre_operacion']}: {fila['importe']}€" for fila in filas_insertadas)
-
-    # La foto NO se borra aqui: se queda en el bucket al menos 1 dia para
-    # dejar ventana de correccion, y la borra limpieza_recibos.py (cron diario).
     notificar_telegram(
-        f"✅ Recibo de {comercio} ({hoy}) — {len(filas_insertadas)} línea(s), {total:.2f}€ total:\n"
+        f"✅ Recibo de {comercio} ({fecha}) — {len(filas_insertadas)} línea(s), {total:.2f}€ total:\n"
         f"{resumen}\nIDs: {ids}"
     )
     print(f"OK: {ids}")
+
+
+def main():
+    if not CUENTA_SHORTCUT:
+        notificar_telegram("❌ Ingesta de foto fallida: Falta 'cuenta' en el payload")
+        sys.exit(1)
+    if not FOTO_PATH:
+        notificar_telegram("❌ Ingesta de foto fallida: Falta 'foto_bucket_path' en el payload")
+        sys.exit(1)
+    if not CATEGORIAS_RAW:
+        notificar_telegram("❌ Ingesta de foto fallida: Falta 'categorias' (preseleccionadas en el Shortcut) en el payload")
+        sys.exit(1)
+
+    try:
+        codigos_categoria = json.loads(CATEGORIAS_RAW)
+    except json.JSONDecodeError:
+        notificar_telegram(f"❌ Ingesta de foto fallida: 'categorias' no es JSON valido: {CATEGORIAS_RAW}")
+        sys.exit(1)
+
+    if not isinstance(codigos_categoria, list) or not codigos_categoria:
+        notificar_telegram(f"❌ Ingesta de foto fallida: 'categorias' debe ser una lista no vacia, llego: {codigos_categoria}")
+        sys.exit(1)
+
+    try:
+        filas_insertadas, comercio, fecha = procesar_foto(CUENTA_SHORTCUT, codigos_categoria, FOTO_PATH)
+    except Exception as e:
+        # La foto NO se borra: se queda en el bucket (7 dias) para que el
+        # cron nocturno de reintentos la vuelva a intentar solo.
+        intentos = guardar_foto_pendiente(FOTO_PATH, CUENTA_SHORTCUT, codigos_categoria)
+        notificar_telegram(
+            f"❌ Ingesta de foto fallida (intento {intentos}): {e}\n"
+            f"------------------------------------------\n"
+            f"Se guardo como pendiente - se reintenta solo cada noche mientras la foto siga "
+            f"disponible. No hace falta que hagas nada."
+        )
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    borrar_foto_pendiente(FOTO_PATH)  # por si esta ejecucion resuelve un pendiente previo
+    notificar_exito(filas_insertadas, comercio, fecha)
 
 
 if __name__ == "__main__":

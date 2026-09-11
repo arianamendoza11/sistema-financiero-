@@ -8,6 +8,7 @@ ingesta_dinamica, etc).
 import json
 import os
 import time
+from datetime import datetime, timezone
 
 import requests
 
@@ -103,6 +104,40 @@ def borrar_objetos_storage(bucket, nombres):
     bucket) de Supabase Storage. Devuelve la respuesta cruda de requests."""
     url = f"{SUPABASE_URL}/storage/v1/object/{bucket}"
     return requests.delete(url, headers=REST_HEADERS, json={"prefixes": nombres}, timeout=15)
+
+
+def guardar_foto_pendiente(foto_bucket_path, cuenta, categorias):
+    """Registra (o incrementa el contador de intentos de) una foto que
+    fallo al procesar. 'Estar en esta tabla' ES el estado de 'pendiente' -
+    no hace falta un campo de estado aparte, se borra al resolverse."""
+    url = f"{SUPABASE_URL}/rest/v1/fotos_pendientes"
+    r = requests.get(url, headers=REST_HEADERS, params={"foto_bucket_path": f"eq.{foto_bucket_path}", "select": "intentos"}, timeout=15)
+    r.raise_for_status()
+    existentes = r.json()
+    intentos = (existentes[0]["intentos"] + 1) if existentes else 1
+
+    headers = {**REST_HEADERS, "Prefer": "resolution=merge-duplicates"}
+    body = {
+        "foto_bucket_path": foto_bucket_path,
+        "cuenta": cuenta,
+        "categorias": categorias,
+        "intentos": intentos,
+        "ultimo_intento": datetime.now(timezone.utc).isoformat(),
+    }
+    requests.post(url, headers=headers, json=[body], timeout=15).raise_for_status()
+    return intentos
+
+
+def borrar_foto_pendiente(foto_bucket_path):
+    url = f"{SUPABASE_URL}/rest/v1/fotos_pendientes"
+    requests.delete(url, headers=REST_HEADERS, params={"foto_bucket_path": f"eq.{foto_bucket_path}"}, timeout=15)
+
+
+def listar_fotos_pendientes():
+    url = f"{SUPABASE_URL}/rest/v1/fotos_pendientes"
+    r = requests.get(url, headers=REST_HEADERS, timeout=15)
+    r.raise_for_status()
+    return r.json()
 
 
 def listar_etiquetas_activas():
