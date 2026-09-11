@@ -157,7 +157,7 @@ def leer_glosario():
         return f.read()
 
 
-MODELO_GEMINI = "gemini-3.8-flash"
+MODELO_GEMINI = "gemini-3.5-flash"  # bajado de 3.8: modelo maduro, menos presion de demanda de lanzamiento reciente
 
 
 REINTENTOS_503 = 3
