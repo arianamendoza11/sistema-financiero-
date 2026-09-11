@@ -39,7 +39,7 @@ FOTO_PATH = os.environ.get("FOTO_PATH") or None
 MADRID = ZoneInfo("Europe/Madrid")
 GLOSARIO_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "glosario_ocr_recibos.md")
 MAX_LINEAS = 60  # un ticket real no supera esto, es solo un limite de cordura
-MODELO_GEMINI = "gemini-flash-latest"
+MODELO_GEMINI = "gemini-3.8-flash"
 
 
 def error_salir(mensaje):
