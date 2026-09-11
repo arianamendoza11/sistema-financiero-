@@ -92,7 +92,7 @@ def listar_objetos_storage(bucket):
     """Devuelve la lista de objetos de un bucket (cada uno con 'name' y
     'created_at' entre otros campos), tal como los expone Supabase Storage."""
     url = f"{SUPABASE_URL}/storage/v1/object/list/{bucket}"
-    body = {"limit": 1000, "sortBy": {"column": "created_at", "order": "asc"}}
+    body = {"prefix": "", "limit": 1000, "sortBy": {"column": "created_at", "order": "asc"}}
     r = requests.post(url, headers=REST_HEADERS, json=body, timeout=15)
     r.raise_for_status()
     return r.json()
