@@ -1,0 +1,35 @@
+name: Sync Etiquetas desde Supabase
+
+on:
+  schedule:
+    - cron: '0 2 * * 0,3'  # Cada 3 días: lunes y jueves a las 02:00 UTC
+  workflow_dispatch:  # Manual si es urgente
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Sync etiquetas desde Supabase
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python scripts/sync_etiquetas.py
+
+      - name: Commit si hay cambios
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add config/etiquetas.json
+          git diff-index --quiet HEAD -- config/etiquetas.json || \
+            (git commit -m "chore: sync etiquetas desde Supabase" && git push)
