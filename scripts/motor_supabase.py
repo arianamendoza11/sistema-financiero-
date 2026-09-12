@@ -7,6 +7,7 @@ ingesta_dinamica, etc).
 """
 import json
 import os
+import sys
 import time
 from datetime import datetime, timezone
 
@@ -153,8 +154,69 @@ GLOSARIO_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "glosari
 
 
 def leer_glosario():
-    with open(GLOSARIO_PATH, encoding="utf-8") as f:
-        return f.read()
+    """
+    Construye el glosario leyendo secciones conceptuales del markdown +
+    tabla de etiquetas dinámicamente desde config/etiquetas.json (caché).
+    
+    Estrategia:
+    1. Lee markdown (referencia de conceptos: principios, fallback, casos ambiguos)
+    2. Extrae TODO EXCEPTO la sección "## Glosario por etiqueta"
+    3. Carga etiquetas dinámicamente desde caché local (cargar_etiquetas_dinamicas)
+    4. Construye tabla dinámica de keywords
+    5. Recombina: conceptos + tabla dinámica = glosario completo
+    
+    Resultado: IDÉNTICO al glosario anterior (markdown llenado), pero tabla
+    se actualiza cada 3 días automáticamente desde Supabase.
+    """
+    try:
+        from cargar_etiquetas_dinamicas import cargar_etiquetas, construir_glosario_para_prompt
+        
+        # Leer markdown completo
+        with open(GLOSARIO_PATH, encoding="utf-8") as f:
+            contenido_md = f.read()
+        
+        # Partir en: [conceptos] + [tabla hardcoded que vamos a reemplazar]
+        partes = contenido_md.split("## Glosario por etiqueta")
+        seccion_conceptos = partes[0]  # Todo antes: principios, fallback, casos ambiguos, etc.
+        
+        # Cargar etiquetas dinámicamente (caché local OR fallback Supabase)
+        etiquetas_dict = cargar_etiquetas()
+        
+        # Construir tabla dinámica de keywords
+        tabla_dinamica = construir_glosario_para_prompt(etiquetas_dict)
+        
+        # Recombinar: conceptos + tabla dinámica = glosario COMPLETO idéntico
+        glosario_completo = (
+            seccion_conceptos + 
+            "\n## Glosario por etiqueta\n\n" + 
+            tabla_dinamica
+        )
+        
+        print(
+            f"✅ Glosario cargado dinámicamente ({len(etiquetas_dict)} etiquetas)",
+            file=sys.stderr
+        )
+        
+        return glosario_completo
+        
+    except ImportError as e:
+        print(
+            f"❌ Error importando cargar_etiquetas_dinamicas: {e}",
+            file=sys.stderr
+        )
+        raise RuntimeError(f"No se pudo cargar el helper de etiquetas dinámicas: {e}")
+    except FileNotFoundError as e:
+        print(
+            f"❌ Error leyendo markdown {GLOSARIO_PATH}: {e}",
+            file=sys.stderr
+        )
+        raise RuntimeError(f"No se encontró el archivo de glosario: {e}")
+    except Exception as e:
+        print(
+            f"❌ Error cargando glosario dinámico: {e}",
+            file=sys.stderr
+        )
+        raise RuntimeError(f"No se pudo cargar el glosario de etiquetas: {e}")
 
 
 MODELO_GEMINI = "gemini-3.5-flash"  # bajado de 3.8: modelo maduro, menos presion de demanda de lanzamiento reciente
