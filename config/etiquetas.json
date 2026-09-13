@@ -1,0 +1,683 @@
+{
+  "timestamp_sync": "2026-09-13T16:14:17.350411",
+  "cantidad": 41,
+  "etiquetas": {
+    "transportes varios": {
+      "id": "ET000019",
+      "keyword": [
+        "taxi",
+        "Uber",
+        "cercanías",
+        "autobús suelto",
+        "gasolina",
+        "peaje",
+        "billete de tren",
+        "BiciMAD",
+        "parking",
+        "alquiler de coche",
+        "patinete compartido",
+        "ferry",
+        "billete de avión puntual"
+      ]
+    },
+    "renta": {
+      "id": "ET000001",
+      "keyword": [
+        "alquiler",
+        "renta",
+        "arrendamiento",
+        "pago de piso",
+        "habitación",
+        "casero"
+      ]
+    },
+    "tarjeta de metro": {
+      "id": "ET000002",
+      "keyword": [
+        "abono transporte",
+        "tarjeta de metro",
+        "abono mensual",
+        "transporte público mensual"
+      ]
+    },
+    "despensa": {
+      "id": "ET000003",
+      "keyword": [
+        "pan",
+        "carne",
+        "pescado",
+        "filete",
+        "pollo",
+        "fruta",
+        "verdura",
+        "huevos",
+        "lácteos",
+        "leche",
+        "yogur",
+        "queso",
+        "arroz",
+        "pasta",
+        "aceite",
+        "atún",
+        "condimentos",
+        "snacks",
+        "agua",
+        "refrescos",
+        "café molido",
+        "cacao",
+        "cereales",
+        "congelados",
+        "embutidos",
+        "mariscos",
+        "especias",
+        "harina",
+        "azúcar",
+        "sal",
+        "vinagre",
+        "salsas",
+        "comida para mascotas",
+        "cerveza sin alcohol",
+        "cebolla",
+        "tomate",
+        "pepino"
+      ]
+    },
+    "barberia": {
+      "id": "ET000004",
+      "keyword": [
+        "corte de pelo",
+        "barbería",
+        "arreglo de barba",
+        "tinte de barba",
+        "tinte de pelo",
+        "tratamientos de cabello",
+        "permanente de rizo",
+        "alisado",
+        "hidratación",
+        "trenzas"
+      ]
+    },
+    "cafeteria": {
+      "id": "ET000005",
+      "keyword": [
+        "café",
+        "capuchino",
+        "desayuno de cafetería",
+        "cruasán",
+        "mollete",
+        "infusión",
+        "cápsulas de café de oficina",
+        "té",
+        "chocolate caliente",
+        "bollería",
+        "sándwich de máquina",
+        "snack de vending"
+      ]
+    },
+    "cerveza o copa": {
+      "id": "ET000006",
+      "keyword": [
+        "cerveza",
+        "caña",
+        "vino",
+        "ron",
+        "whisky",
+        "vodka",
+        "ginebra",
+        "cubata",
+        "copa",
+        "sidra",
+        "cava",
+        "botella de licor",
+        "cóctel",
+        "champán",
+        "cerveza artesanal",
+        "mezcal",
+        "tequila",
+        "absenta",
+        "mini",
+        "Red Bull"
+      ]
+    },
+    "entrada": {
+      "id": "ET000007",
+      "keyword": [
+        "entrada de cine",
+        "concierto",
+        "museo",
+        "piscina",
+        "forfait de pista",
+        "evento",
+        "festival",
+        "teatro",
+        "parque de atracciones",
+        "partido",
+        "estadio",
+        "exposición",
+        "clubes nocturnos",
+        "fiestas",
+        "discotecas"
+      ]
+    },
+    "apertura": {
+      "id": "ET000008",
+      "keyword": [
+        "apertura de cuenta",
+        "alta bancaria",
+        "depósito inicial",
+        "comisión de apertura",
+        "apertura de producto financiero"
+      ]
+    },
+    "limpieza del hogar": {
+      "id": "ET000009",
+      "keyword": [
+        "detergente",
+        "lejía",
+        "friegasuelos",
+        "quitagrasas",
+        "estropajo",
+        "bayetas",
+        "lavavajillas",
+        "suavizante",
+        "desinfectante",
+        "limpiacristales",
+        "quitamanchas",
+        "aromatizantes",
+        "repelentes de insectos"
+      ]
+    },
+    "salud de los pies": {
+      "id": "ET000010",
+      "keyword": [
+        "crema de pies",
+        "cortaúñas",
+        "tratamiento de hongos",
+        "plantillas ortopédicas",
+        "calcetines de compresión",
+        "callicida",
+        "limas de pies",
+        "aceites",
+        "pastillas antifúngicas",
+        "lacas de uñas",
+        "CO2 para pies"
+      ]
+    },
+    "regalos": {
+      "id": "ET000011",
+      "keyword": [
+        "papel de regalo",
+        "bolsa de regalo",
+        "detalle para alguien",
+        "tarjeta de felicitación",
+        "flores",
+        "tarjeta regalo",
+        "gift card"
+      ]
+    },
+    "comida fuera": {
+      "id": "ET000012",
+      "keyword": [
+        "menú del día",
+        "kebab",
+        "pizza",
+        "hamburguesa",
+        "mcdonalds",
+        "bocadillo",
+        "tacos",
+        "pollo a la brasa",
+        "comida para llevar",
+        "restaurante",
+        "comida en el trabajo",
+        "sushi",
+        "poke bowl",
+        "delivery",
+        "Glovo",
+        "Uber Eats",
+        "catering",
+        "brunch",
+        "food truck",
+        "Burger King",
+        "burritos",
+        "taquitos",
+        "rodizios",
+        "barbacoas",
+        "parrillas"
+      ]
+    },
+    "saldo a favor": {
+      "id": "ET000013",
+      "keyword": [
+        "saldo a favor",
+        "devolución",
+        "reembolso",
+        "abono",
+        "ajuste positivo",
+        "crédito a favor"
+      ]
+    },
+    "farmacia": {
+      "id": "ET000014",
+      "keyword": [
+        "medicamentos",
+        "ibuprofeno",
+        "paracetamol",
+        "test de embarazo",
+        "preservativos",
+        "gotas",
+        "jarabe",
+        "vitaminas",
+        "suplementos",
+        "mascarilla FFP2",
+        "termómetro",
+        "tiritas",
+        "alcohol en gel",
+        "test de antígenos",
+        "anticonceptivos"
+      ]
+    },
+    "servicios digitales": {
+      "id": "ET000015",
+      "keyword": [
+        "suscripción",
+        "software",
+        "aplicación",
+        "servicio digital",
+        "streaming",
+        "Netflix",
+        "Spotify",
+        "Claude",
+        "ChatGPT",
+        "iCloud",
+        "Google One",
+        "Microsoft 365",
+        "hosting",
+        "dominio",
+        "SaaS"
+      ]
+    },
+    "salario": {
+      "id": "ET000016",
+      "keyword": [
+        "nómina",
+        "sueldo",
+        "salario",
+        "pago de empresa",
+        "remuneración",
+        "ingreso laboral",
+        "vacaciones no gozadas",
+        "finiquito"
+      ]
+    },
+    "ajuste patrimonial": {
+      "id": "ET000017",
+      "keyword": [
+        "ajuste patrimonial",
+        "revalorización",
+        "depreciación",
+        "corrección de patrimonio",
+        "ajuste de saldo",
+        "regularización patrimonial"
+      ]
+    },
+    "drogas": {
+      "id": "ET000018",
+      "keyword": [
+        "LSD",
+        "marihuana",
+        "hachís",
+        "cocaína",
+        "MDMA",
+        "éxtasis",
+        "ketamina",
+        "hongos alucinógenos",
+        "popper"
+      ]
+    },
+    "lavanderia": {
+      "id": "ET000020",
+      "keyword": [
+        "lavandería",
+        "lavado y secado",
+        "tinte de ropa",
+        "tintorería",
+        "arreglo de ropa",
+        "sastre",
+        "planchado",
+        "lavado por separado",
+        "secado por separado"
+      ]
+    },
+    "cursos y certificaciones": {
+      "id": "ET000021",
+      "keyword": [
+        "curso",
+        "formación",
+        "certificación",
+        "examen",
+        "tasa de examen",
+        "Microsoft certification",
+        "Udemy",
+        "Coursera",
+        "libro técnico",
+        "matrícula",
+        "educación",
+        "material de estudio"
+      ]
+    },
+    "ropa varios": {
+      "id": "ET000022",
+      "keyword": [
+        "ropa interior",
+        "calcetines",
+        "guantes",
+        "zapatillas",
+        "pasadores",
+        "paraguas",
+        "camisetas",
+        "abrigos",
+        "chaqueta",
+        "vestido",
+        "traje",
+        "ropa deportiva",
+        "calzado de vestir",
+        "cinturón",
+        "bufanda",
+        "ropa de segunda mano",
+        "corbata",
+        "vaqueros"
+      ]
+    },
+    "articulos de deporte": {
+      "id": "ET000023",
+      "keyword": [
+        "material deportivo",
+        "mancuernas",
+        "magnesio",
+        "alquiler de equipo",
+        "esquí",
+        "ropa técnica",
+        "cantimplora",
+        "bicicleta",
+        "patines",
+        "balón",
+        "raqueta",
+        "proteína en polvo",
+        "complementos deportivos"
+      ]
+    },
+    "otros": {
+      "id": "ET000024",
+      "keyword": [
+        "guardarropa",
+        "servicios de compañía",
+        "acompañante",
+        "escort",
+        "masajes",
+        "apuestas",
+        "lotería",
+        "propinas sin categoría clara"
+      ]
+    },
+    "cuidado personal basico": {
+      "id": "ET000025",
+      "keyword": [
+        "champú",
+        "gel de baño",
+        "jabón",
+        "desodorante",
+        "cepillo de dientes",
+        "pasta dental",
+        "toallitas",
+        "colonia",
+        "perfume",
+        "maquinillas de afeitar",
+        "protector labial",
+        "crema hidratante",
+        "crema solar",
+        "hilo dental",
+        "algodón",
+        "bastoncillos",
+        "peines de cabello"
+      ]
+    },
+    "telefonia movil": {
+      "id": "ET000026",
+      "keyword": [
+        "tarifa móvil",
+        "línea móvil",
+        "recarga móvil",
+        "prepago",
+        "factura de teléfono",
+        "datos móviles",
+        "llamadas",
+        "SMS",
+        "operador móvil",
+        "SIM"
+      ]
+    },
+    "tecnologia": {
+      "id": "ET000027",
+      "keyword": [
+        "altavoz",
+        "cargador",
+        "cable",
+        "auriculares",
+        "funda de móvil",
+        "funda de tablet",
+        "power bank",
+        "alfombrilla",
+        "accesorios electrónicos",
+        "móvil",
+        "portátil",
+        "tablet",
+        "gafas de realidad aumentada",
+        "Vision Pro",
+        "monitor",
+        "teclado",
+        "ratón",
+        "disco duro",
+        "router",
+        "smartwatch",
+        "impresora"
+      ]
+    },
+    "seguros": {
+      "id": "ET000028",
+      "keyword": [
+        "seguro",
+        "póliza",
+        "prima",
+        "renovación de seguro",
+        "seguro de hogar",
+        "seguro de salud",
+        "seguro de coche",
+        "seguro de viaje",
+        "cobertura",
+        "franquicia"
+      ]
+    },
+    "clases de gimnasia": {
+      "id": "ET000029",
+      "keyword": [
+        "clase de gimnasia",
+        "clase dirigida",
+        "pilates",
+        "yoga"
+      ]
+    },
+    "documentacion y abogados": {
+      "id": "ET000030",
+      "keyword": [
+        "abogado",
+        "gestoría",
+        "gestor",
+        "trámite",
+        "documentación",
+        "tasa administrativa",
+        "extranjería",
+        "regularización",
+        "renovación de permiso",
+        "notaría",
+        "asesoría legal",
+        "expediente"
+      ]
+    },
+    "cuota gym": {
+      "id": "ET000031",
+      "keyword": [
+        "cuota de gimnasio",
+        "membresía gym",
+        "abono gimnasio",
+        "mensualidad gimnasio",
+        "Basic-Fit",
+        "gimnasio",
+        "sala de pesas"
+      ]
+    },
+    "articulos del hogar": {
+      "id": "ET000032",
+      "keyword": [
+        "ambientador",
+        "bolsas de basura",
+        "papel higiénico",
+        "papel de cocina",
+        "fundas de almohada",
+        "sábanas",
+        "ganchos",
+        "enchufes",
+        "saco de dormir",
+        "vajilla",
+        "utensilios de cocina",
+        "menaje",
+        "decoración",
+        "velas",
+        "plantas de interior",
+        "macetas",
+        "organizadores",
+        "muebles pequeños",
+        "tostadora",
+        "batidora"
+      ]
+    },
+    "impuestos": {
+      "id": "ET000033",
+      "keyword": [
+        "IRPF",
+        "IVA",
+        "impuesto",
+        "tasa",
+        "tributo",
+        "declaración de la renta",
+        "pago a Hacienda",
+        "multa tributaria",
+        "IBI",
+        "plusvalía",
+        "retención fiscal"
+      ]
+    },
+    "ayuda familiar": {
+      "id": "ET000034",
+      "keyword": [
+        "ayuda familiar",
+        "transferencia a familia",
+        "envío de dinero a familiares",
+        "apoyo económico",
+        "remesa familiar",
+        "dinero a padres",
+        "dinero a hermanos"
+      ]
+    },
+    "parafarmacia": {
+      "id": "ET000035",
+      "keyword": [
+        "cremas dermatológicas",
+        "mascarillas faciales",
+        "productos aclaradores",
+        "tratamientos de piel",
+        "sérum facial",
+        "protector solar facial premium",
+        "suplemento de colágeno",
+        "tratamiento capilar"
+      ]
+    },
+    "donaciones": {
+      "id": "ET000036",
+      "keyword": [
+        "donativo",
+        "colecta benéfica",
+        "ONG",
+        "crowdfunding"
+      ]
+    },
+    "hobbies": {
+      "id": "ET000037",
+      "keyword": [
+        "instrumento musical",
+        "juego de mesa",
+        "material de manualidades",
+        "videojuego",
+        "material de pintura",
+        "equipo de fotografía"
+      ]
+    },
+    "mudanza": {
+      "id": "ET000038",
+      "keyword": [
+        "mudanza",
+        "empresa de mudanzas",
+        "transporte de muebles",
+        "cajas de mudanza",
+        "embalaje",
+        "flete",
+        "mozos de mudanza",
+        "alquiler de furgoneta",
+        "guardamuebles",
+        "fianza",
+        "primer depósito"
+      ]
+    },
+    "deuda de credito": {
+      "id": "ET000039",
+      "keyword": [
+        "pago de tarjeta de crédito",
+        "deuda de crédito",
+        "cuota de crédito",
+        "amortización de crédito",
+        "pago de préstamo",
+        "intereses de crédito",
+        "financiación",
+        "revolving"
+      ]
+    },
+    "bricolaje/mantenimiento": {
+      "id": "ET000040",
+      "keyword": [
+        "herramientas",
+        "tornillos",
+        "material de reparación",
+        "pintura",
+        "bombillas",
+        "taladro",
+        "brocas",
+        "silicona",
+        "cinta aislante",
+        "electricista",
+        "fontanero",
+        "repuestos de bicicleta"
+      ]
+    },
+    "ahorros": {
+      "id": "ET000041",
+      "keyword": [
+        "ahorro",
+        "transferencia a cuenta de ahorro",
+        "aportación a ahorros",
+        "fondo de emergencia",
+        "hucha",
+        "apartado de dinero",
+        "traspaso a cuenta de ahorro"
+      ]
+    }
+  }
+}
