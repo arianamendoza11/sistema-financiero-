@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Credenciales / entorno
+.env
+*.env
+
+# Claude Code local
+.claude/settings.local.json
