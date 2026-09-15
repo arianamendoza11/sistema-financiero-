@@ -70,5 +70,31 @@
       "importe_fijo": -27,
       "comentario_fijo": "Cuota de gimnasio domiciliada"
     }
+  ],
+  "ahorro_aporte": [
+    {
+      "fecha_inicio": "2026-09-01",
+      "fecha_fin": null,
+      "codigo_categoria": "ahorros",
+      "id_etiqueta": "ET000041",
+      "comentario_desde_shortcut": true,
+      "filas": [
+        { "rol": "origen",  "id_cuenta": null,       "signo": -1, "nombre_operacion": "Aporte a Ahorro" },
+        { "rol": "destino", "id_cuenta": "CU000002", "signo":  1, "nombre_operacion": "Aporte a Ahorro" }
+      ]
+    }
+  ],
+  "ahorro_retiro": [
+    {
+      "fecha_inicio": "2026-09-01",
+      "fecha_fin": null,
+      "codigo_categoria": "ahorros",
+      "id_etiqueta": "ET000041",
+      "comentario_desde_shortcut": true,
+      "filas": [
+        { "rol": "origen",  "id_cuenta": "CU000002", "signo": -1, "nombre_operacion": "Retiro de Ahorro" },
+        { "rol": "destino", "id_cuenta": null,       "signo":  1, "nombre_operacion": "Retiro de Ahorro" }
+      ]
+    }
   ]
 }
