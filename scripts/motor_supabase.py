@@ -83,6 +83,16 @@ def resolver_id_etiqueta_por_nombre(nombre_etiqueta):
     return filas[0]["id_etiqueta"] if filas else None
 
 
+def resolver_nombre_etiqueta_por_id(id_etiqueta):
+    """Devuelve el nombre_etiqueta cuyo id_etiqueta coincide exacto, o None."""
+    url = f"{SUPABASE_URL}/rest/v1/etiquetas"
+    params = {"id_etiqueta": f"eq.{id_etiqueta}", "select": "nombre_etiqueta"}
+    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
+    r.raise_for_status()
+    filas = r.json()
+    return filas[0]["nombre_etiqueta"] if filas else None
+
+
 def insertar_filas(filas):
     """POST atomico (una sola sentencia INSERT) de 1-N filas. Devuelve la
     respuesta cruda de requests; el llamador decide como tratar el error."""
@@ -107,38 +117,109 @@ def borrar_objetos_storage(bucket, nombres):
     return requests.delete(url, headers=REST_HEADERS, json={"prefixes": nombres}, timeout=15)
 
 
-def guardar_foto_pendiente(foto_bucket_path, cuenta, categorias):
-    """Registra (o incrementa el contador de intentos de) una foto que
-    fallo al procesar. 'Estar en esta tabla' ES el estado de 'pendiente' -
-    no hace falta un campo de estado aparte, se borra al resolverse."""
-    url = f"{SUPABASE_URL}/rest/v1/fotos_pendientes"
-    r = requests.get(url, headers=REST_HEADERS, params={"foto_bucket_path": f"eq.{foto_bucket_path}", "select": "intentos"}, timeout=15)
-    r.raise_for_status()
-    existentes = r.json()
-    intentos = (existentes[0]["intentos"] + 1) if existentes else 1
+_PATRONES_NO_REINTENTABLES = (
+    "no es JSON valido",
+    "debe ser una lista",
+    "No existe ninguna cuenta",
+    "No hay version vigente",
+    "no se puede registrar en una sola linea",
+    "Falta '",
+    "que no existe",
+    "Linea incompleta",
+    "no esta en la lista preseleccionada",
+)
 
-    headers = {**REST_HEADERS, "Prefer": "resolution=merge-duplicates"}
+
+def es_error_reintentable(excepcion):
+    """Decide si vale la pena que el cron nocturno reintente este fallo.
+    Transitorio (Gemini/Supabase saturado o caido, timeout de red) -> True,
+    reintentar puede funcionar. Estructural (dato invalido, config faltante,
+    payload malformado) -> False: el mismo input va a fallar exactamente
+    igual todas las noches, hace falta que Diego lo arregle a mano antes de
+    que reintentar tenga sentido. Ante la duda, True - reintentar de mas sale
+    barato (segundos de Actions), reintentar de menos pierde datos."""
+    if isinstance(excepcion, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
+        return True
+
+    mensaje = str(excepcion)
+    if any(codigo in mensaje for codigo in ("503", "504", "502", "500")):
+        return True
+    if any(patron in mensaje for patron in _PATRONES_NO_REINTENTABLES):
+        return False
+
+    return True
+
+
+def guardar_registro_pendiente(origen, payload, foto_bucket_path=None, error_detalle=None, reintentable=True):
+    """Inserta un registro pendiente nuevo a partir de un fallo recien
+    ocurrido en vivo. 'Estar en esta tabla' ES el estado de 'pendiente' - no
+    hace falta un campo de estado aparte, se borra al resolverse. Devuelve el
+    id_pendiente creado."""
+    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
     body = {
+        "origen": origen,
+        "payload": payload,
         "foto_bucket_path": foto_bucket_path,
-        "cuenta": cuenta,
-        "categorias": categorias,
-        "intentos": intentos,
-        "ultimo_intento": datetime.now(timezone.utc).isoformat(),
+        "error_detalle": error_detalle,
+        "reintentable": reintentable,
     }
-    requests.post(url, headers=headers, json=[body], timeout=15).raise_for_status()
-    return intentos
+    r = requests.post(url, headers=REST_HEADERS, json=[body], timeout=15)
+    r.raise_for_status()
+    return r.json()[0]["id_pendiente"]
 
 
-def borrar_foto_pendiente(foto_bucket_path):
-    url = f"{SUPABASE_URL}/rest/v1/fotos_pendientes"
-    requests.delete(url, headers=REST_HEADERS, params={"foto_bucket_path": f"eq.{foto_bucket_path}"}, timeout=15)
-
-
-def listar_fotos_pendientes():
-    url = f"{SUPABASE_URL}/rest/v1/fotos_pendientes"
-    r = requests.get(url, headers=REST_HEADERS, timeout=15)
+def listar_registros_pendientes(solo_reintentables=True):
+    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
+    params = {"reintentable": "eq.true"} if solo_reintentables else {}
+    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
     r.raise_for_status()
     return r.json()
+
+
+def listar_fotos_pendientes_de_borrado():
+    """Rutas de Storage que siguen referenciadas en registros_pendientes
+    (origen gasto_foto) - sin importar si son reintentables o no, mientras
+    sigan en la tabla es porque todavia no se dieron por perdidas. Lo usa
+    limpieza_recibos.py para nunca borrar una foto que el sistema todavia
+    necesita, sin importar cuantos dias de antiguedad tenga."""
+    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
+    params = {"origen": "eq.gasto_foto", "select": "foto_bucket_path"}
+    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
+    r.raise_for_status()
+    return {fila["foto_bucket_path"] for fila in r.json() if fila["foto_bucket_path"]}
+
+
+def borrar_registro_pendiente(id_pendiente):
+    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
+    requests.delete(url, headers=REST_HEADERS, params={"id_pendiente": f"eq.{id_pendiente}"}, timeout=15)
+
+
+def borrar_registros_pendientes_de_foto(foto_bucket_path):
+    """Borra cualquier pendiente de origen gasto_foto asociado a esa ruta -
+    por si esta ejecucion resuelve en vivo un fallo previo de la misma foto."""
+    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
+    requests.delete(
+        url,
+        headers=REST_HEADERS,
+        params={"foto_bucket_path": f"eq.{foto_bucket_path}", "origen": "eq.gasto_foto"},
+        timeout=15,
+    )
+
+
+def actualizar_intento_fallido(id_pendiente, intentos, error_detalle, reintentable):
+    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
+    body = {
+        "intentos": intentos,
+        "error_detalle": error_detalle,
+        "reintentable": reintentable,
+        "ultimo_intento": datetime.now(timezone.utc).isoformat(),
+    }
+    requests.patch(url, headers=REST_HEADERS, params={"id_pendiente": f"eq.{id_pendiente}"}, json=body, timeout=15)
+
+
+def marcar_alertado(id_pendiente):
+    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
+    requests.patch(url, headers=REST_HEADERS, params={"id_pendiente": f"eq.{id_pendiente}"}, json={"alertado": True}, timeout=15)
 
 
 def listar_etiquetas_activas():

@@ -22,8 +22,9 @@ Diseño de responsabilidades (para que la IA nunca pueda romper presupuesto):
 
 La logica real vive en procesar_foto() - no llama a error_salir ni hace
 sys.exit, solo lanza excepciones. Esto permite que la reuse tanto main()
-(disparo normal via Shortcut/GitHub) como reintentar_fotos_pendientes.py
-(cron nocturno que reprocesa fallos de Gemini) sin duplicar nada.
+(disparo normal via Shortcut/GitHub) como reintentar_registros_pendientes.py
+(cron nocturno unico que reprocesa fallos de cualquier origen) sin duplicar
+nada.
 
 Sin RUN2, sin botones, sin webhook: se inserta directo y Telegram notifica
 el resultado. Si algo sale mal se corrige a mano despues (via Supabase MCP),
@@ -50,8 +51,9 @@ from motor_supabase import (
     listar_etiquetas_activas,
     leer_glosario,
     llamar_gemini_json,
-    guardar_foto_pendiente,
-    borrar_foto_pendiente,
+    guardar_registro_pendiente,
+    borrar_registros_pendientes_de_foto,
+    es_error_reintentable,
 )
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
@@ -212,13 +214,22 @@ def procesar_foto(cuenta_nombre, codigos_categoria, foto_path):
         raise RuntimeError(f"Supabase rechazo el insert ({resultado.status_code}): {resultado.text}")
 
     comercio = resultado_ia.get("comercio") or "comercio no identificado"
-    return resultado.json(), comercio, hoy
+    etiquetas = [linea.get("etiqueta") for linea in lineas_ia]
+    return resultado.json(), etiquetas, comercio, hoy
 
 
-def notificar_exito(filas_insertadas, comercio, fecha):
+def notificar_exito(filas_insertadas, etiquetas, comercio, fecha):
     ids = ", ".join(fila["id_operacion"] for fila in filas_insertadas)
     total = sum(abs(float(fila["importe"])) for fila in filas_insertadas)
-    resumen = "\n".join(f"  - {fila['nombre_operacion']}: {fila['importe']}€" for fila in filas_insertadas)
+    resumen = "\n".join(
+        "  - {tipo}: {nombre} — {importe}€ — etiqueta: {etiqueta}".format(
+            tipo="Ingreso" if float(fila["importe"]) > 0 else "Gasto",
+            nombre=fila["nombre_operacion"],
+            importe=fila["importe"],
+            etiqueta=etiqueta,
+        )
+        for fila, etiqueta in zip(filas_insertadas, etiquetas)
+    )
     notificar_telegram(
         f"✅ Recibo de {comercio} ({fecha}) — {len(filas_insertadas)} línea(s), {total:.2f}€ total:\n"
         f"{resumen}\nIDs: {ids}"
@@ -247,23 +258,29 @@ def main():
         notificar_telegram(f"❌ Ingesta de foto fallida: 'categorias' debe ser una lista no vacia, llego: {codigos_categoria}")
         sys.exit(1)
 
+    payload = {"cuenta": CUENTA_SHORTCUT, "categorias": codigos_categoria, "foto_bucket_path": FOTO_PATH}
+
     try:
-        filas_insertadas, comercio, fecha = procesar_foto(CUENTA_SHORTCUT, codigos_categoria, FOTO_PATH)
+        filas_insertadas, etiquetas, comercio, fecha = procesar_foto(CUENTA_SHORTCUT, codigos_categoria, FOTO_PATH)
     except Exception as e:
-        # La foto NO se borra: se queda en el bucket (7 dias) para que el
-        # cron nocturno de reintentos la vuelva a intentar solo.
-        intentos = guardar_foto_pendiente(FOTO_PATH, CUENTA_SHORTCUT, codigos_categoria)
-        notificar_telegram(
-            f"❌ Ingesta de foto fallida (intento {intentos}): {e}\n"
-            f"------------------------------------------\n"
-            f"Se guardo como pendiente - se reintenta solo cada noche mientras la foto siga "
-            f"disponible. No hace falta que hagas nada."
+        # La foto NO se borra: se queda en el bucket (7 dias, protegida ademas
+        # mientras siga referenciada aqui - ver limpieza_recibos.py) para que
+        # el cron nocturno de reintentos la vuelva a intentar solo.
+        reintentable = False if isinstance(e, FotoNoEncontrada) else es_error_reintentable(e)
+        id_pendiente = guardar_registro_pendiente(
+            "gasto_foto", payload, foto_bucket_path=FOTO_PATH, error_detalle=str(e), reintentable=reintentable
         )
+        nota = (
+            "Se guardo como pendiente, se reintenta solo cada noche mientras la foto siga disponible."
+            if reintentable
+            else "NO se va a reintentar solo (parece un error de datos/configuracion, no transitorio) - hace falta arreglarlo a mano."
+        )
+        notificar_telegram(f"❌ Ingesta de foto fallida ({id_pendiente}): {e}\n{nota}")
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 
-    borrar_foto_pendiente(FOTO_PATH)  # por si esta ejecucion resuelve un pendiente previo
-    notificar_exito(filas_insertadas, comercio, fecha)
+    borrar_registros_pendientes_de_foto(FOTO_PATH)  # por si esta ejecucion resuelve un pendiente previo
+    notificar_exito(filas_insertadas, etiquetas, comercio, fecha)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,12 @@ equivoca, por eso se delega.
 Si no llega 'fecha' se usa la fecha de ejecucion del workflow (hora de
 Madrid) - pensado para NFC, que se dispara en el instante exacto del pago y
 no tiene sentido que pregunte fecha.
+
+La logica real vive en procesar_gasto_dinamico() - no llama a Telegram ni
+hace sys.exit, solo lanza excepciones. Esto permite que la reuse tanto
+main() (disparo normal via Shortcut/GitHub) como
+reintentar_registros_pendientes.py (cron nocturno) sin duplicar nada, mismo
+patron que procesar_foto() en ingesta_foto.py.
 """
 import json
 import os
@@ -29,6 +35,8 @@ from motor_supabase import (
     listar_etiquetas_activas,
     leer_glosario,
     llamar_gemini_json,
+    guardar_registro_pendiente,
+    es_error_reintentable,
 )
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
@@ -39,15 +47,16 @@ LINEAS_RAW = os.environ.get("LINEAS") or None
 MADRID = ZoneInfo("Europe/Madrid")
 
 
-def error_salir(mensaje):
-    notificar_telegram(f"❌ Gasto dinamico fallido: {mensaje}")
-    print(f"ERROR: {mensaje}", file=sys.stderr)
-    sys.exit(1)
+def normalizar_importe(importe):
+    """El Shortcut puede mandar el decimal con coma o con punto segun el
+    formato regional del iPhone en ese momento - se normaliza aqui en vez de
+    depender de que el Shortcut siempre mande el mismo caracter."""
+    return float(str(importe).replace(",", "."))
 
 
-def resolver_fecha():
-    if FECHA_SHORTCUT:
-        return FECHA_SHORTCUT
+def resolver_fecha(fecha_shortcut):
+    if fecha_shortcut:
+        return fecha_shortcut
     return datetime.now(MADRID).date().isoformat()
 
 
@@ -81,65 +90,13 @@ Glosario de referencia (sugestivo, no exhaustivo):
 Lineas a clasificar:
 {items_texto}
 """
-    resultado = llamar_gemini_json([{"text": prompt}], GEMINI_API_KEY)  # deja propagar RuntimeError - main() decide el fallback
+    resultado = llamar_gemini_json([{"text": prompt}], GEMINI_API_KEY)  # deja propagar RuntimeError
 
     etiquetas = resultado.get("etiquetas")
     if not isinstance(etiquetas, list) or len(etiquetas) != len(lineas):
-        error_salir(f"Gemini devolvio {etiquetas!r}, se esperaban {len(lineas)} etiqueta(s)")
+        raise RuntimeError(f"Gemini devolvio {etiquetas!r}, se esperaban {len(lineas)} etiqueta(s)")
 
     return etiquetas
-
-
-def construir_sql_fallback(lineas, id_cuenta, fecha, etiquetas_activas):
-    """Cuando Gemini esta caido, arma un INSERT manual con todo ya resuelto
-    (cuenta, categoria, signo) excepto la etiqueta - eso queda como
-    instruccion + la lista real de etiquetas activas, para completarlo a
-    mano (Supabase MCP, o pegado en cualquier chat con esa capacidad)."""
-    filas_sql = []
-    for linea in lineas:
-        codigo_categoria = linea.get("categoria")
-        importe = linea.get("importe")
-        if not codigo_categoria or importe is None:
-            continue
-
-        categoria = resolver_categoria(codigo_categoria, fecha)
-        if categoria is None:
-            continue
-
-        signo = resolver_signo(categoria["tipo"])
-        if signo is None:
-            continue
-
-        nombre_operacion = (linea.get("nombre_operacion") or codigo_categoria).replace("'", "''")
-        comentario = linea.get("comentario")
-        comentario_sql = "'{}'".format(comentario.replace("'", "''")) if comentario else "NULL"
-        importe_final = abs(float(importe)) * signo
-
-        filas_sql.append(
-            "  ('{nombre}', {importe}, '{fecha}', '{cuenta}', '{categoria}', "
-            "(SELECT id_etiqueta FROM etiquetas WHERE nombre_etiqueta = '<<ELEGIR>>'), "
-            "{comentario}, '{tipo}')".format(
-                nombre=nombre_operacion,
-                importe=importe_final,
-                fecha=fecha,
-                cuenta=id_cuenta,
-                categoria=categoria["id_categoria"],
-                comentario=comentario_sql,
-                tipo=categoria["tipo"],
-            )
-        )
-
-    if not filas_sql:
-        return None
-
-    return (
-        "-- Reemplaza cada <<ELEGIR>> por el nombre EXACTO de la etiqueta que mejor\n"
-        "-- encaje, elegida de esta lista de etiquetas activas:\n"
-        "-- " + ", ".join(etiquetas_activas) + "\n"
-        "INSERT INTO seguimiento_efectivo\n"
-        "  (nombre_operacion, importe, fecha_operacion, id_cuenta, id_categoria, id_etiqueta, comentario, tipo)\n"
-        "VALUES\n" + ",\n".join(filas_sql) + ";"
-    )
 
 
 def construir_fila(linea, id_cuenta, fecha, nombre_etiqueta):
@@ -147,19 +104,19 @@ def construir_fila(linea, id_cuenta, fecha, nombre_etiqueta):
     importe = linea.get("importe")
 
     if not codigo_categoria or importe is None:
-        error_salir(f"Linea incompleta, falta categoria/importe: {linea}")
+        raise ValueError(f"Linea incompleta, falta categoria/importe: {linea}")
 
     categoria = resolver_categoria(codigo_categoria, fecha)
     if categoria is None:
-        error_salir(f"No hay version vigente de la categoria '{codigo_categoria}' para la fecha {fecha}")
+        raise ValueError(f"No hay version vigente de la categoria '{codigo_categoria}' para la fecha {fecha}")
 
     id_etiqueta = resolver_id_etiqueta_por_nombre(nombre_etiqueta)
     if id_etiqueta is None:
-        error_salir(f"La IA devolvio etiqueta '{nombre_etiqueta}' que no existe")
+        raise RuntimeError(f"La IA devolvio etiqueta '{nombre_etiqueta}' que no existe")
 
     signo = resolver_signo(categoria["tipo"])
     if signo is None:
-        error_salir(
+        raise ValueError(
             f"La categoria '{codigo_categoria}' es de tipo '{categoria['tipo']}', "
             "que no se puede registrar en una sola linea (ej. un traspaso necesita 2 filas ligadas)"
         )
@@ -168,7 +125,7 @@ def construir_fila(linea, id_cuenta, fecha, nombre_etiqueta):
 
     return {
         "nombre_operacion": nombre_operacion,
-        "importe": abs(float(importe)) * signo,
+        "importe": abs(normalizar_importe(importe)) * signo,
         "fecha_operacion": fecha,
         "id_cuenta": id_cuenta,
         "id_categoria": categoria["id_categoria"],
@@ -178,40 +135,34 @@ def construir_fila(linea, id_cuenta, fecha, nombre_etiqueta):
     }
 
 
-def main():
-    if not CUENTA_SHORTCUT:
-        error_salir("Falta 'cuenta' en el payload")
-    if not LINEAS_RAW:
-        error_salir("Falta 'lineas' en el payload")
+def procesar_gasto_dinamico(cuenta_nombre, lineas_raw, fecha_shortcut):
+    """Hace todo el trabajo real a partir del payload crudo del Shortcut.
+    Lanza excepciones en cualquier fallo (ValueError para datos invalidos,
+    RuntimeError para fallos de IA/Supabase) - nunca llama a Telegram ni
+    hace sys.exit, eso lo decide el llamador."""
+    if not cuenta_nombre:
+        raise ValueError("Falta 'cuenta' en el payload")
+    if not lineas_raw:
+        raise ValueError("Falta 'lineas' en el payload")
 
     try:
-        lineas = json.loads(LINEAS_RAW)
+        lineas = json.loads(lineas_raw) if isinstance(lineas_raw, str) else lineas_raw
     except json.JSONDecodeError:
-        error_salir(f"'lineas' no es JSON valido: {LINEAS_RAW}")
+        raise ValueError(f"'lineas' no es JSON valido: {lineas_raw}")
 
     if not isinstance(lineas, list) or not (1 <= len(lineas) <= 3):
         cantidad = len(lineas) if isinstance(lineas, list) else "datos invalidos"
-        error_salir(f"'lineas' debe ser una lista de 1 a 3 gastos, llego: {cantidad}")
+        raise ValueError(f"'lineas' debe ser una lista de 1 a 3 gastos, llego: {cantidad}")
 
-    id_cuenta = resolver_id_cuenta_por_nombre(CUENTA_SHORTCUT)
+    id_cuenta = resolver_id_cuenta_por_nombre(cuenta_nombre)
     if id_cuenta is None:
-        error_salir(f"No existe ninguna cuenta llamada '{CUENTA_SHORTCUT}'")
+        raise ValueError(f"No existe ninguna cuenta llamada '{cuenta_nombre}'")
 
-    fecha = resolver_fecha()
+    fecha = resolver_fecha(fecha_shortcut)
 
     etiquetas_activas = listar_etiquetas_activas()
     glosario_texto = leer_glosario()
-
-    try:
-        etiquetas_asignadas = resolver_etiquetas_ia(lineas, etiquetas_activas, glosario_texto)
-    except RuntimeError as e:
-        sql_fallback = construir_sql_fallback(lineas, id_cuenta, fecha, etiquetas_activas)
-        mensaje = f"❌ Gasto dinamico fallido: {e}"
-        if sql_fallback:
-            mensaje += "\n------------------------------------------\n" + sql_fallback
-        notificar_telegram(mensaje)
-        print(f"ERROR: {e}", file=sys.stderr)
-        sys.exit(1)
+    etiquetas_asignadas = resolver_etiquetas_ia(lineas, etiquetas_activas, glosario_texto)
 
     filas = [
         construir_fila(linea, id_cuenta, fecha, etiqueta)
@@ -220,12 +171,48 @@ def main():
 
     resultado = insertar_filas(filas)
     if not resultado.ok:
-        error_salir(f"Supabase rechazo el insert ({resultado.status_code}): {resultado.text}")
+        raise RuntimeError(f"Supabase rechazo el insert ({resultado.status_code}): {resultado.text}")
 
-    filas_insertadas = resultado.json()
+    return resultado.json(), etiquetas_asignadas, fecha
+
+
+def notificar_exito(filas_insertadas, etiquetas_asignadas, fecha):
+    resumen = "\n".join(
+        "  - {tipo}: {nombre} — {importe}€ — etiqueta: {etiqueta}".format(
+            tipo="Ingreso" if float(fila["importe"]) > 0 else "Gasto",
+            nombre=fila["nombre_operacion"],
+            importe=fila["importe"],
+            etiqueta=etiqueta,
+        )
+        for fila, etiqueta in zip(filas_insertadas, etiquetas_asignadas)
+    )
     ids = ", ".join(fila["id_operacion"] for fila in filas_insertadas)
-    notificar_telegram(f"✅ Gasto registrado ({fecha}): {ids}")
+    notificar_telegram(f"✅ Registrado ({fecha}):\n{resumen}\nIDs: {ids}")
     print(f"OK: {ids}")
+
+
+def main():
+    payload = {"cuenta": CUENTA_SHORTCUT, "fecha": FECHA_SHORTCUT, "lineas": LINEAS_RAW}
+
+    try:
+        filas_insertadas, etiquetas_asignadas, fecha = procesar_gasto_dinamico(
+            CUENTA_SHORTCUT, LINEAS_RAW, FECHA_SHORTCUT
+        )
+    except Exception as e:
+        reintentable = es_error_reintentable(e)
+        id_pendiente = guardar_registro_pendiente(
+            "gasto_dinamico", payload, error_detalle=str(e), reintentable=reintentable
+        )
+        nota = (
+            "Se guardo como pendiente, se reintenta solo cada noche."
+            if reintentable
+            else "NO se va a reintentar solo (parece un error de datos/configuracion, no transitorio) - hace falta arreglarlo a mano."
+        )
+        notificar_telegram(f"❌ Gasto dinamico fallido ({id_pendiente}): {e}\n{nota}")
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    notificar_exito(filas_insertadas, etiquetas_asignadas, fecha)
 
 
 if __name__ == "__main__":
