@@ -43,6 +43,12 @@ MONTO_EUR = os.environ.get("MONTO_EUR") or None
 CUENTA_SHORTCUT = os.environ.get("CUENTA") or None
 COMENTARIO_SHORTCUT = os.environ.get("COMENTARIO") or None
 
+def importe_a_float(valor):
+    """El Shortcut puede mandar el decimal con coma o punto segun el formato
+    regional del iPhone ("3,3" o "3.3") - se normaliza aqui."""
+    return float(str(valor).replace(",", "."))
+
+
 PLANTILLAS_PATH = os.path.join(
     os.path.dirname(__file__), "..", "config", "plantillas_estandarizadas.json"
 )
@@ -81,7 +87,7 @@ def calcular_comentario(version, categoria, monto, comentario_shortcut):
         if regla == "condicional_umbral_8":
             if monto is None:
                 raise ValueError("La regla de comentario 'condicional_umbral_8' necesita 'monto' y no llego")
-            return "Pago con adicionales" if abs(float(monto)) > 8 else "Pago exacto"
+            return "Pago con adicionales" if abs(importe_a_float(monto)) > 8 else "Pago exacto"
         raise ValueError(f"Regla de comentario desconocida: {regla}")
 
     if "comentario_fuente" in version:
@@ -103,7 +109,7 @@ def resolver_monto(version, monto):
         return version["importe_fijo"]
     if monto is None:
         raise ValueError("Este tipo de ingesta requiere 'monto' desde el Shortcut y no llego")
-    return abs(float(monto)) * version["signo"]
+    return abs(importe_a_float(monto)) * version["signo"]
 
 
 def resolver_importe_eur(version, monto_eur):
@@ -115,7 +121,7 @@ def resolver_importe_eur(version, monto_eur):
         return None
     if monto_eur is None:
         raise ValueError("Este tipo de ingesta requiere 'monto_eur' (euros pagados) desde el Shortcut y no llego")
-    return abs(float(monto_eur)) * version["signo"]
+    return abs(importe_a_float(monto_eur)) * version["signo"]
 
 
 def construir_fila_simple(version, fecha, monto, monto_eur, cuenta_shortcut, comentario_shortcut):
@@ -150,7 +156,7 @@ def resolver_cuenta(id_cuenta_plantilla, cuenta_shortcut):
 def construir_filas_ahorro(version, fecha, monto, cuenta_shortcut, comentario_shortcut):
     if monto is None:
         raise ValueError("El ahorro requiere 'monto' desde el Shortcut y no llego")
-    monto_abs = abs(float(monto))
+    monto_abs = abs(importe_a_float(monto))
 
     categoria = resolver_categoria_o_falla(version["codigo_categoria"], fecha)
     comentario = calcular_comentario(version, categoria, monto, comentario_shortcut)
