@@ -8,7 +8,6 @@ vive en cada script (ingesta_estandarizada, ingesta_dinamica, ingesta_foto).
 import base64
 import json
 import os
-import sys
 import time
 import unicodedata
 
@@ -82,16 +81,6 @@ def resolver_id_cuenta_por_nombre(nombre_cuenta):
     r.raise_for_status()
     filas = r.json()
     return filas[0]["id_cuenta"] if filas else None
-
-
-def resolver_id_etiqueta_por_nombre(nombre_etiqueta):
-    """Devuelve el id_etiqueta cuyo nombre_etiqueta coincide exacto, o None."""
-    url = f"{SUPABASE_URL}/rest/v1/etiquetas"
-    params = {"nombre_etiqueta": f"eq.{nombre_etiqueta}", "select": "id_etiqueta"}
-    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
-    r.raise_for_status()
-    filas = r.json()
-    return filas[0]["id_etiqueta"] if filas else None
 
 
 def resolver_nombre_etiqueta_por_id(id_etiqueta):
@@ -169,15 +158,6 @@ def borrar_registros_pendientes_de_foto(foto_bucket_path):
         params={"foto_bucket_path": f"eq.{foto_bucket_path}", "origen": "eq.gasto_foto"},
         timeout=15,
     )
-
-
-def listar_etiquetas_activas():
-    """Vocabulario vigente de etiquetas (nombres), consultado en vivo."""
-    url = f"{SUPABASE_URL}/rest/v1/etiquetas"
-    params = {"estado": "eq.activa", "select": "nombre_etiqueta"}
-    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
-    r.raise_for_status()
-    return sorted({fila["nombre_etiqueta"] for fila in r.json()})
 
 
 # --- IA de vision: Qwen via DashScope (endpoint OpenAI-compatible) ---
