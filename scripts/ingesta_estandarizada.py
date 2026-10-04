@@ -10,6 +10,13 @@ se resuelve por codigo_categoria + vigencia en Supabase (SCD2), medio_pago lo
 pone el trigger de la base a partir de la cuenta, tipo siempre es el de la
 categoria resuelta.
 
+Multi-moneda: la mayoria de ingestas son en EUR y no tocan importe_eur (queda
+NULL). Las plantillas con "requiere_importe_eur": true (ej. pago de tarjeta
+pagado con soles desde Interbank Debito) reciben un segundo monto en euros
+(monto_eur) y lo guardan en importe_eur - el importe en soles vive en la
+moneda de la cuenta y el euro-equivalente (tasa real del banco tecleada en el
+Shortcut) es lo que baja la deuda en euros de la tarjeta.
+
 La logica real vive en procesar_ingesta_estandarizada() - no llama a
 Telegram ni hace sys.exit, solo lanza excepciones. Esto permite que la reuse
 tanto main() como reintentar_registros_pendientes.py, mismo patron que
@@ -32,6 +39,7 @@ from motor_supabase import (
 TIPO_INGESTA = os.environ.get("TIPO_INGESTA") or None
 FECHA = os.environ.get("FECHA") or None
 MONTO = os.environ.get("MONTO") or None
+MONTO_EUR = os.environ.get("MONTO_EUR") or None
 CUENTA_SHORTCUT = os.environ.get("CUENTA") or None
 COMENTARIO_SHORTCUT = os.environ.get("COMENTARIO") or None
 
@@ -98,20 +106,21 @@ def resolver_monto(version, monto):
     return abs(float(monto)) * version["signo"]
 
 
-def resolver_cuenta(id_cuenta_plantilla, cuenta_shortcut):
-    if id_cuenta_plantilla is not None:
-        return id_cuenta_plantilla
-    if not cuenta_shortcut:
-        raise ValueError("Este tipo de ingesta requiere 'cuenta' (nombre, ej. 'BBVA Esp') desde el Shortcut y no llego")
-    id_cuenta = resolver_id_cuenta_por_nombre(cuenta_shortcut)
-    if id_cuenta is None:
-        raise ValueError(f"No existe ninguna cuenta llamada '{cuenta_shortcut}'")
-    return id_cuenta
+def resolver_importe_eur(version, monto_eur):
+    """Solo las plantillas con 'requiere_importe_eur' (ej. pago de tarjeta con
+    soles) llevan euro-equivalente. El resto devuelve None y la fila no toca
+    importe_eur (queda NULL). El euro se realiza aqui con la tasa real del
+    banco que el usuario tecleo en el Shortcut - nunca se adivina."""
+    if not version.get("requiere_importe_eur"):
+        return None
+    if monto_eur is None:
+        raise ValueError("Este tipo de ingesta requiere 'monto_eur' (euros pagados) desde el Shortcut y no llego")
+    return abs(float(monto_eur)) * version["signo"]
 
 
-def construir_fila_simple(version, fecha, monto, cuenta_shortcut, comentario_shortcut):
+def construir_fila_simple(version, fecha, monto, monto_eur, cuenta_shortcut, comentario_shortcut):
     categoria = resolver_categoria_o_falla(version["codigo_categoria"], fecha)
-    return {
+    fila = {
         "nombre_operacion": version["nombre_operacion"],
         "importe": resolver_monto(version, monto),
         "fecha_operacion": fecha,
@@ -121,6 +130,21 @@ def construir_fila_simple(version, fecha, monto, cuenta_shortcut, comentario_sho
         "comentario": calcular_comentario(version, categoria, monto, comentario_shortcut),
         "tipo": categoria["tipo"],
     }
+    importe_eur = resolver_importe_eur(version, monto_eur)
+    if importe_eur is not None:
+        fila["importe_eur"] = importe_eur
+    return fila
+
+
+def resolver_cuenta(id_cuenta_plantilla, cuenta_shortcut):
+    if id_cuenta_plantilla is not None:
+        return id_cuenta_plantilla
+    if not cuenta_shortcut:
+        raise ValueError("Este tipo de ingesta requiere 'cuenta' (nombre, ej. 'BBVA Esp') desde el Shortcut y no llego")
+    id_cuenta = resolver_id_cuenta_por_nombre(cuenta_shortcut)
+    if id_cuenta is None:
+        raise ValueError(f"No existe ninguna cuenta llamada '{cuenta_shortcut}'")
+    return id_cuenta
 
 
 def construir_filas_ahorro(version, fecha, monto, cuenta_shortcut, comentario_shortcut):
@@ -146,7 +170,7 @@ def construir_filas_ahorro(version, fecha, monto, cuenta_shortcut, comentario_sh
     return filas
 
 
-def procesar_ingesta_estandarizada(tipo_ingesta, fecha, monto, cuenta_shortcut, comentario_shortcut):
+def procesar_ingesta_estandarizada(tipo_ingesta, fecha, monto, cuenta_shortcut, comentario_shortcut, monto_eur=None):
     """Hace todo el trabajo real a partir del payload crudo del Shortcut.
     Lanza ValueError/RuntimeError en cualquier fallo - nunca llama a
     Telegram ni hace sys.exit, eso lo decide el llamador."""
@@ -160,7 +184,7 @@ def procesar_ingesta_estandarizada(tipo_ingesta, fecha, monto, cuenta_shortcut, 
     if "filas" in version:
         filas = construir_filas_ahorro(version, fecha, monto, cuenta_shortcut, comentario_shortcut)
     else:
-        filas = [construir_fila_simple(version, fecha, monto, cuenta_shortcut, comentario_shortcut)]
+        filas = [construir_fila_simple(version, fecha, monto, monto_eur, cuenta_shortcut, comentario_shortcut)]
 
     resultado = insertar_filas(filas)
     if not resultado.ok:
@@ -190,13 +214,14 @@ def main():
         "tipo_ingesta": TIPO_INGESTA,
         "fecha": FECHA,
         "monto": MONTO,
+        "monto_eur": MONTO_EUR,
         "cuenta": CUENTA_SHORTCUT,
         "comentario": COMENTARIO_SHORTCUT,
     }
 
     try:
         filas_insertadas, id_etiqueta = procesar_ingesta_estandarizada(
-            TIPO_INGESTA, FECHA, MONTO, CUENTA_SHORTCUT, COMENTARIO_SHORTCUT
+            TIPO_INGESTA, FECHA, MONTO, CUENTA_SHORTCUT, COMENTARIO_SHORTCUT, MONTO_EUR
         )
     except Exception as e:
         reintentable = es_error_reintentable(e)
