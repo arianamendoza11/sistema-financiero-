@@ -17,7 +17,7 @@ Diseno de responsabilidades (para que la IA nunca pueda romper presupuesto):
 
 La IA de vision es Qwen via DashScope (endpoint OpenAI-compatible).
 La logica real vive en procesar_foto() - no llama a error_salir ni sys.exit, solo
-lanza excepciones. Reutilizable por main() y por el reproceso nocturno.
+lanza excepciones; main() decide Telegram y pendiente.
 
 Sin RUN2, sin botones, sin webhook: se inserta directo y Telegram notifica. Si
 algo sale mal se corrige a mano despues (via Supabase MCP).
@@ -43,7 +43,7 @@ from motor_supabase import (
     normalizar,
     guardar_registro_pendiente,
     borrar_registros_pendientes_de_foto,
-    es_error_reintentable,
+    NOTA_PENDIENTE,
 )
 
 DASHSCOPE_API_KEY = os.environ.get("DASHSCOPE_API_KEY")
@@ -418,16 +418,10 @@ def main():
     try:
         filas_insertadas, etiquetas, comercio, fecha = procesar_foto(CUENTA_SHORTCUT, codigos_categoria, FOTO_PATH)
     except Exception as e:
-        reintentable = False if isinstance(e, FotoNoEncontrada) else es_error_reintentable(e)
         id_pendiente = guardar_registro_pendiente(
-            "gasto_foto", payload, foto_bucket_path=FOTO_PATH, error_detalle=str(e), reintentable=reintentable
+            "gasto_foto", payload, foto_bucket_path=FOTO_PATH, error_detalle=str(e)
         )
-        nota = (
-            "Se guardo como pendiente; se reintenta mientras la foto siga disponible."
-            if reintentable
-            else "NO se reintenta solo (error de datos/config, no transitorio) - requiere arreglo manual."
-        )
-        notificar_telegram(f"❌ Ingesta de foto fallida ({id_pendiente}): {e}\n{nota}")
+        notificar_telegram(f"❌ Ingesta de foto fallida ({id_pendiente}): {e}\n{NOTA_PENDIENTE}")
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 

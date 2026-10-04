@@ -1,16 +1,15 @@
 # -*- coding: utf-8 -*-
 """
 Limpieza del bucket 'recibos': corre cada 2 dias (cron) y borra solo los
-objetos con mas de RETENCION_DIAS de antiguedad. 7 dias de ventana le da
-tiempo de sobra al cron de reintentar_registros_pendientes.py (corre cada
-noche) para resolver un fallo de Gemini antes de perder la foto.
+objetos con mas de RETENCION_DIAS de antiguedad. 7 dias de ventana le dan
+tiempo de sobra a la rutina nocturna de Claude (corre cada noche) para
+procesar un pendiente de foto antes de perder la foto.
 
 Doble condicional antes de borrar: ademas de la edad, se excluye cualquier
-foto que todavia este referenciada en registros_pendientes (origen
-gasto_foto) - si sigue ahi es porque el sistema todavia la necesita para
-reintentar, sin importar cuantos dias hayan pasado. Solo se pierde una foto
-cuando el propio cron de reintentos se rinde con ella (FotoNoEncontrada) y
-la saca de la tabla.
+foto que todavia este referenciada por un pendiente sin procesar
+(origen gasto_foto, estado='pendiente') - si sigue ahi es porque el sistema
+todavia la necesita, sin importar cuantos dias hayan pasado. Las de pendientes
+ya procesados si caducan con normalidad.
 """
 from datetime import datetime, timedelta, timezone
 
