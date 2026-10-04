@@ -19,7 +19,7 @@ Shortcut) es lo que baja la deuda en euros de la tarjeta.
 
 La logica real vive en procesar_ingesta_estandarizada() - no llama a
 Telegram ni hace sys.exit, solo lanza excepciones. Esto permite que la reuse
-tanto main() como reintentar_registros_pendientes.py, mismo patron que
+main() y deja la logica separada de Telegram/sys.exit, mismo patron que
 procesar_foto() en ingesta_foto.py.
 """
 import json
@@ -33,7 +33,7 @@ from motor_supabase import (
     resolver_nombre_etiqueta_por_id,
     insertar_filas,
     guardar_registro_pendiente,
-    es_error_reintentable,
+    NOTA_PENDIENTE,
 )
 
 TIPO_INGESTA = os.environ.get("TIPO_INGESTA") or None
@@ -230,16 +230,8 @@ def main():
             TIPO_INGESTA, FECHA, MONTO, CUENTA_SHORTCUT, COMENTARIO_SHORTCUT, MONTO_EUR
         )
     except Exception as e:
-        reintentable = es_error_reintentable(e)
-        id_pendiente = guardar_registro_pendiente(
-            "ingesta_estandarizada", payload, error_detalle=str(e), reintentable=reintentable
-        )
-        nota = (
-            "Se guardo como pendiente, se reintenta solo cada noche."
-            if reintentable
-            else "NO se va a reintentar solo (parece un error de datos/configuracion, no transitorio) - hace falta arreglarlo a mano."
-        )
-        notificar_telegram(f"❌ Ingesta '{TIPO_INGESTA}' fallida ({id_pendiente}): {e}\n{nota}")
+        id_pendiente = guardar_registro_pendiente("ingesta_estandarizada", payload, error_detalle=str(e))
+        notificar_telegram(f"❌ Ingesta '{TIPO_INGESTA}' fallida ({id_pendiente}): {e}\n{NOTA_PENDIENTE}")
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 

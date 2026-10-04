@@ -16,7 +16,7 @@ Si no llega 'fecha' se usa la fecha de ejecucion del workflow (hora de Madrid)
 
 La logica real vive en procesar_gasto_dinamico() - no llama a Telegram ni hace
 sys.exit, solo lanza excepciones. Esto permite reusarla desde main() (disparo
-normal) y desde el reproceso nocturno sin duplicar nada.
+normal); si falla, el pendiente lo procesa la rutina nocturna de Claude.
 """
 import json
 import os
@@ -36,7 +36,7 @@ from motor_supabase import (
     resolver_signo,
     insertar_filas,
     guardar_registro_pendiente,
-    es_error_reintentable,
+    NOTA_PENDIENTE,
 )
 
 CUENTA_SHORTCUT = os.environ.get("CUENTA") or None
@@ -200,16 +200,8 @@ def main():
             CUENTA_SHORTCUT, LINEAS_RAW, FECHA_SHORTCUT
         )
     except Exception as e:
-        reintentable = es_error_reintentable(e)
-        id_pendiente = guardar_registro_pendiente(
-            "gasto_dinamico", payload, error_detalle=str(e), reintentable=reintentable
-        )
-        nota = (
-            "Se guardo como pendiente; la rutina nocturna lo intentara clasificar."
-            if reintentable
-            else "NO se reintenta solo (error de datos/config) - requiere arreglo manual."
-        )
-        notificar_telegram(f"❌ Gasto dinamico fallido ({id_pendiente}): {e}\n{nota}")
+        id_pendiente = guardar_registro_pendiente("gasto_dinamico", payload, error_detalle=str(e))
+        notificar_telegram(f"❌ Gasto dinamico fallido ({id_pendiente}): {e}\n{NOTA_PENDIENTE}")
         print(f"ERROR: {e}", file=sys.stderr)
         sys.exit(1)
 

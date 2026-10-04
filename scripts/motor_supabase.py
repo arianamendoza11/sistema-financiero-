@@ -11,7 +11,6 @@ import os
 import sys
 import time
 import unicodedata
-from datetime import datetime, timezone
 
 import requests
 
@@ -129,64 +128,24 @@ def borrar_objetos_storage(bucket, nombres):
     return requests.delete(url, headers=REST_HEADERS, json={"prefixes": nombres}, timeout=15)
 
 
-_PATRONES_NO_REINTENTABLES = (
-    "no es JSON valido",
-    "debe ser una lista",
-    "No existe ninguna cuenta",
-    "No hay version vigente",
-    "no se puede registrar en una sola linea",
-    "Falta '",
-    "que no existe",
-    "Linea incompleta",
-    "no esta en la lista preseleccionada",
-    "no tiene etiquetas asociadas",
-    "no cuadran con el total",
-)
+NOTA_PENDIENTE = "Se guardo como pendiente: la rutina nocturna lo procesara esta noche."
 
 
-def es_error_reintentable(excepcion):
-    """Decide si vale la pena que el reproceso nocturno reintente este fallo.
-    Transitorio (IA/Supabase saturado o caido, timeout de red) -> True.
-    Estructural (dato invalido, config faltante, payload malformado) -> False.
-    Ante la duda, True - reintentar de mas sale barato, de menos pierde datos."""
-    if isinstance(excepcion, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
-        return True
-
-    mensaje = str(excepcion)
-    if any(codigo in mensaje for codigo in ("503", "504", "502", "500", "429")):
-        return True
-    if any(patron in mensaje for patron in _PATRONES_NO_REINTENTABLES):
-        return False
-
-    return True
-
-
-def guardar_registro_pendiente(origen, payload, foto_bucket_path=None, error_detalle=None, reintentable=True):
+def guardar_registro_pendiente(origen, payload, foto_bucket_path=None, error_detalle=None):
     """Inserta un registro pendiente nuevo a partir de un fallo recien ocurrido.
-    'Estar en esta tabla' ES el estado de 'pendiente'. Devuelve el id_pendiente."""
+    Nace con estado='pendiente'; la rutina nocturna de Claude lo resuelve y lo
+    marca 'procesado', y la purga diaria de GitHub lo borra. Devuelve el
+    id_pendiente."""
     url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
     body = {
         "origen": origen,
         "payload": payload,
         "foto_bucket_path": foto_bucket_path,
         "error_detalle": error_detalle,
-        "reintentable": reintentable,
     }
     r = requests.post(url, headers=REST_HEADERS, json=[body], timeout=15)
     r.raise_for_status()
     return r.json()[0]["id_pendiente"]
-
-
-def listar_registros_pendientes(solo_reintentables=True):
-    """Pendientes vivos. Los que la rutina nocturna ya resolvio quedan en
-    estado='procesado' hasta la purga diaria y no se vuelven a tocar."""
-    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
-    params = {"estado": "eq.pendiente"}
-    if solo_reintentables:
-        params["reintentable"] = "eq.true"
-    r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
-    r.raise_for_status()
-    return r.json()
 
 
 def listar_fotos_pendientes_de_borrado():
@@ -201,11 +160,6 @@ def listar_fotos_pendientes_de_borrado():
     return {fila["foto_bucket_path"] for fila in r.json() if fila["foto_bucket_path"]}
 
 
-def borrar_registro_pendiente(id_pendiente):
-    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
-    requests.delete(url, headers=REST_HEADERS, params={"id_pendiente": f"eq.{id_pendiente}"}, timeout=15)
-
-
 def borrar_registros_pendientes_de_foto(foto_bucket_path):
     """Borra cualquier pendiente de origen gasto_foto asociado a esa ruta."""
     url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
@@ -215,22 +169,6 @@ def borrar_registros_pendientes_de_foto(foto_bucket_path):
         params={"foto_bucket_path": f"eq.{foto_bucket_path}", "origen": "eq.gasto_foto"},
         timeout=15,
     )
-
-
-def actualizar_intento_fallido(id_pendiente, intentos, error_detalle, reintentable):
-    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
-    body = {
-        "intentos": intentos,
-        "error_detalle": error_detalle,
-        "reintentable": reintentable,
-        "ultimo_intento": datetime.now(timezone.utc).isoformat(),
-    }
-    requests.patch(url, headers=REST_HEADERS, params={"id_pendiente": f"eq.{id_pendiente}"}, json=body, timeout=15)
-
-
-def marcar_alertado(id_pendiente):
-    url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
-    requests.patch(url, headers=REST_HEADERS, params={"id_pendiente": f"eq.{id_pendiente}"}, json={"alertado": True}, timeout=15)
 
 
 def listar_etiquetas_activas():
