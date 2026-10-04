@@ -1,23 +1,29 @@
 # -*- coding: utf-8 -*-
 """
-Cron nocturno unico: reintenta todo lo que quedo en registros_pendientes,
-sin importar el origen (gasto_dinamico, gasto_foto, ingesta_estandarizada).
-Reusa las funciones procesar_* de cada script - no duplica logica de
-negocio, mismo patron que ya usaba reintentar_fotos_pendientes.py.
+Reproceso de registros_pendientes (gasto_dinamico, gasto_foto,
+ingesta_estandarizada). Reusa las funciones procesar_* de cada script - no
+duplica logica de negocio.
 
-Para no spamear Telegram cada noche que algo siga fallando por lo mismo, se
+NOTA (WS3): el cron automatico esta DESACTIVADO. El reproceso nocturno pasa a
+la rutina de Claude (WS4). Este script se conserva solo para disparo manual
+(workflow_dispatch) hasta validar la rutina; despues se depura o elimina.
+
+Para no spamear Telegram cada reproceso que algo siga fallando por lo mismo, se
 queda callado en reintentos fallidos y solo avisa en tres casos:
 - exito (siempre)
-- una foto que ya se perdio en Storage (FotoNoEncontrada) - fallo terminal,
-  no tiene sentido seguir reintentando
-- un registro que lleva 3 intentos fallidos sin resolverse - un aviso unico
-  (columna 'alertado' evita repetirlo cada noche)
+- una foto que ya se perdio en Storage (FotoNoEncontrada) - fallo terminal
+- un registro con 3 intentos fallidos sin resolverse - un aviso unico
+  (columna 'alertado' evita repetirlo)
 
 Los registros marcados reintentable=False (errores estructurales de datos o
-configuracion, no transitorios) se ignoran aqui a proposito: reintentarlos
-no cambia nada y solo gasta minutos de Actions. Quedan en la tabla para que
-Diego los revise a mano.
+config) se ignoran a proposito: quedan en la tabla para que Ariana los revise a
+mano.
+
+Entre un registro y el siguiente se espera PAUSA_ENTRE_PENDIENTES_SEG como
+cortesia para no saturar la IA de vision en rafagas.
 """
+import time
+
 from ingesta_dinamica import procesar_gasto_dinamico, notificar_exito as notificar_exito_dinamico
 from ingesta_estandarizada import procesar_ingesta_estandarizada, notificar_exito as notificar_exito_estandarizada
 from ingesta_foto import procesar_foto, notificar_exito as notificar_exito_foto, FotoNoEncontrada
@@ -31,6 +37,7 @@ from motor_supabase import (
 )
 
 INTENTOS_ANTES_DE_ALERTAR = 3
+PAUSA_ENTRE_PENDIENTES_SEG = 15  # cortesia para no saturar la IA de vision en rafagas
 
 
 def reintentar_gasto_dinamico(payload):
@@ -43,7 +50,7 @@ def reintentar_gasto_dinamico(payload):
 def reintentar_ingesta_estandarizada(payload):
     filas_insertadas, id_etiqueta = procesar_ingesta_estandarizada(
         payload.get("tipo_ingesta"), payload.get("fecha"), payload.get("monto"),
-        payload.get("cuenta"), payload.get("comentario"),
+        payload.get("cuenta"), payload.get("comentario"), payload.get("monto_eur"),
     )
     notificar_exito_estandarizada(payload.get("tipo_ingesta"), filas_insertadas, id_etiqueta)
 
@@ -68,7 +75,11 @@ def main():
         print("Nada pendiente reintentable.")
         return
 
-    for registro in pendientes:
+    for i, registro in enumerate(pendientes):
+        # Espaciar las llamadas a la IA para no provocar 429 en rafagas.
+        if i > 0:
+            time.sleep(PAUSA_ENTRE_PENDIENTES_SEG)
+
         id_pendiente = registro["id_pendiente"]
         origen = registro["origen"]
         reintentar = REINTENTOS_POR_ORIGEN.get(origen)

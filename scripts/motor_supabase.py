@@ -1,14 +1,16 @@
 # -*- coding: utf-8 -*-
 """
 Funciones compartidas por todos los scripts de ingesta: resolver datos contra
-Supabase y notificar por Telegram. No contiene logica de negocio de ningun
-tipo de ingesta en particular - eso vive en cada script (ingesta_estandarizada,
-ingesta_dinamica, etc).
+Supabase, notificar por Telegram y llamar a la IA de vision (Qwen/DashScope).
+No contiene logica de negocio de ningun tipo de ingesta en particular - eso
+vive en cada script (ingesta_estandarizada, ingesta_dinamica, ingesta_foto).
 """
+import base64
 import json
 import os
 import sys
 import time
+import unicodedata
 from datetime import datetime, timezone
 
 import requests
@@ -34,6 +36,17 @@ def notificar_telegram(texto):
         pass  # si Telegram falla, no debe tapar el error original
 
 
+def normalizar(texto):
+    """minuscula, sin acentos, espacios colapsados - lo hace el codigo, no Ariana.
+    Tolera como se escribe de verdad ("Pechuga de POLLO" matchea keyword "pollo").
+    Lo comparten el matcher del gasto dinamico y el del gasto por foto."""
+    if not texto:
+        return ""
+    t = unicodedata.normalize("NFKD", str(texto))
+    t = "".join(c for c in t if not unicodedata.combining(c))
+    return " ".join(t.lower().split())
+
+
 SIGNO_POR_TIPO_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "signo_por_tipo.json")
 with open(SIGNO_POR_TIPO_PATH, encoding="utf-8") as _f:
     _SIGNO_POR_TIPO = json.load(_f)
@@ -42,8 +55,7 @@ with open(SIGNO_POR_TIPO_PATH, encoding="utf-8") as _f:
 def resolver_signo(tipo):
     """Devuelve +1/-1 segun config/signo_por_tipo.json para el 'tipo' de una
     categoria (ingreso, gasto, etc.), o None si ese tipo no esta permitido en
-    un registro de una sola linea (ej. 'traspaso' necesita 2 filas ligadas,
-    no lo puede decidir un signo suelto)."""
+    un registro de una sola linea (ej. 'traspaso' necesita 2 filas ligadas)."""
     return _SIGNO_POR_TIPO.get(tipo)
 
 
@@ -127,22 +139,21 @@ _PATRONES_NO_REINTENTABLES = (
     "que no existe",
     "Linea incompleta",
     "no esta en la lista preseleccionada",
+    "no tiene etiquetas asociadas",
+    "no cuadran con el total",
 )
 
 
 def es_error_reintentable(excepcion):
-    """Decide si vale la pena que el cron nocturno reintente este fallo.
-    Transitorio (Gemini/Supabase saturado o caido, timeout de red) -> True,
-    reintentar puede funcionar. Estructural (dato invalido, config faltante,
-    payload malformado) -> False: el mismo input va a fallar exactamente
-    igual todas las noches, hace falta que Diego lo arregle a mano antes de
-    que reintentar tenga sentido. Ante la duda, True - reintentar de mas sale
-    barato (segundos de Actions), reintentar de menos pierde datos."""
+    """Decide si vale la pena que el reproceso nocturno reintente este fallo.
+    Transitorio (IA/Supabase saturado o caido, timeout de red) -> True.
+    Estructural (dato invalido, config faltante, payload malformado) -> False.
+    Ante la duda, True - reintentar de mas sale barato, de menos pierde datos."""
     if isinstance(excepcion, (requests.exceptions.Timeout, requests.exceptions.ConnectionError)):
         return True
 
     mensaje = str(excepcion)
-    if any(codigo in mensaje for codigo in ("503", "504", "502", "500")):
+    if any(codigo in mensaje for codigo in ("503", "504", "502", "500", "429")):
         return True
     if any(patron in mensaje for patron in _PATRONES_NO_REINTENTABLES):
         return False
@@ -151,10 +162,8 @@ def es_error_reintentable(excepcion):
 
 
 def guardar_registro_pendiente(origen, payload, foto_bucket_path=None, error_detalle=None, reintentable=True):
-    """Inserta un registro pendiente nuevo a partir de un fallo recien
-    ocurrido en vivo. 'Estar en esta tabla' ES el estado de 'pendiente' - no
-    hace falta un campo de estado aparte, se borra al resolverse. Devuelve el
-    id_pendiente creado."""
+    """Inserta un registro pendiente nuevo a partir de un fallo recien ocurrido.
+    'Estar en esta tabla' ES el estado de 'pendiente'. Devuelve el id_pendiente."""
     url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
     body = {
         "origen": origen,
@@ -178,10 +187,8 @@ def listar_registros_pendientes(solo_reintentables=True):
 
 def listar_fotos_pendientes_de_borrado():
     """Rutas de Storage que siguen referenciadas en registros_pendientes
-    (origen gasto_foto) - sin importar si son reintentables o no, mientras
-    sigan en la tabla es porque todavia no se dieron por perdidas. Lo usa
-    limpieza_recibos.py para nunca borrar una foto que el sistema todavia
-    necesita, sin importar cuantos dias de antiguedad tenga."""
+    (origen gasto_foto). Lo usa limpieza_recibos.py para nunca borrar una foto
+    que el sistema todavia necesita."""
     url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
     params = {"origen": "eq.gasto_foto", "select": "foto_bucket_path"}
     r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
@@ -195,8 +202,7 @@ def borrar_registro_pendiente(id_pendiente):
 
 
 def borrar_registros_pendientes_de_foto(foto_bucket_path):
-    """Borra cualquier pendiente de origen gasto_foto asociado a esa ruta -
-    por si esta ejecucion resuelve en vivo un fallo previo de la misma foto."""
+    """Borra cualquier pendiente de origen gasto_foto asociado a esa ruta."""
     url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
     requests.delete(
         url,
@@ -223,7 +229,7 @@ def marcar_alertado(id_pendiente):
 
 
 def listar_etiquetas_activas():
-    """Vocabulario vigente de etiquetas (consultado en vivo, nunca hardcodeado)."""
+    """Vocabulario vigente de etiquetas (nombres), consultado en vivo."""
     url = f"{SUPABASE_URL}/rest/v1/etiquetas"
     params = {"estado": "eq.activa", "select": "nombre_etiqueta"}
     r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
@@ -231,114 +237,92 @@ def listar_etiquetas_activas():
     return sorted({fila["nombre_etiqueta"] for fila in r.json()})
 
 
-GLOSARIO_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "glosario_ocr_recibos.md")
+# --- IA de vision: Qwen via DashScope (endpoint OpenAI-compatible) ---
+# QWEN_BASE_URL (workspace compatible-mode) va como secret en GitHub Actions.
+# El MODELO va aqui en el script como parametro (no como secret - no aporta
+# tenerlo fuera). Opciones: qwen3-vl-flash ($0.05/$0.40 por millon, el mas
+# barato) o qwen3-vl-plus ($0.20/$1.60). El prompt de foto esta disenado para
+# que flash rinda: menu numerado acotado a las categorias del Shortcut, glosario
+# que se impone en codigo y verificacion de importes contra el TOTAL.
+QWEN_BASE_URL = (os.environ.get("QWEN_BASE_URL") or "").rstrip("/")
+MODELO_QWEN = "qwen3-vl-flash"
+
+MAX_INTENTOS_QWEN = 3    # intentos totales (1 inicial + 2 reintentos)
+ESPERA_QWEN_5XX_SEG = 5  # 5xx = servidores saturados
+ESPERA_QWEN_429_SEG = 20  # 429 = rate limit
 
 
-def leer_glosario():
-    """
-    Construye el glosario leyendo secciones conceptuales del markdown +
-    tabla de etiquetas dinámicamente desde config/etiquetas.json (caché).
-    
-    Estrategia:
-    1. Lee markdown (referencia de conceptos: principios, fallback, casos ambiguos)
-    2. Extrae TODO EXCEPTO la sección "## Glosario por etiqueta"
-    3. Carga etiquetas dinámicamente desde caché local (cargar_etiquetas_dinamicas)
-    4. Construye tabla dinámica de keywords
-    5. Recombina: conceptos + tabla dinámica = glosario completo
-    
-    Resultado: IDÉNTICO al glosario anterior (markdown llenado), pero tabla
-    se actualiza cada 3 días automáticamente desde Supabase.
-    """
-    try:
-        from cargar_etiquetas_dinamicas import cargar_etiquetas, construir_glosario_para_prompt
-        
-        # Leer markdown completo
-        with open(GLOSARIO_PATH, encoding="utf-8") as f:
-            contenido_md = f.read()
-        
-        # Partir en: [conceptos] + [tabla hardcoded que vamos a reemplazar]
-        partes = contenido_md.split("## Glosario por etiqueta")
-        seccion_conceptos = partes[0]  # Todo antes: principios, fallback, casos ambiguos, etc.
-        
-        # Cargar etiquetas dinámicamente (caché local OR fallback Supabase)
-        etiquetas_dict = cargar_etiquetas()
-        
-        # Construir tabla dinámica de keywords
-        tabla_dinamica = construir_glosario_para_prompt(etiquetas_dict)
-        
-        # Recombinar: conceptos + tabla dinámica = glosario COMPLETO idéntico
-        glosario_completo = (
-            seccion_conceptos + 
-            "\n## Glosario por etiqueta\n\n" + 
-            tabla_dinamica
-        )
-        
-        print(
-            f"✅ Glosario cargado dinámicamente ({len(etiquetas_dict)} etiquetas)",
-            file=sys.stderr
-        )
-        
-        return glosario_completo
-        
-    except ImportError as e:
-        print(
-            f"❌ Error importando cargar_etiquetas_dinamicas: {e}",
-            file=sys.stderr
-        )
-        raise RuntimeError(f"No se pudo cargar el helper de etiquetas dinámicas: {e}")
-    except FileNotFoundError as e:
-        print(
-            f"❌ Error leyendo markdown {GLOSARIO_PATH}: {e}",
-            file=sys.stderr
-        )
-        raise RuntimeError(f"No se encontró el archivo de glosario: {e}")
-    except Exception as e:
-        print(
-            f"❌ Error cargando glosario dinámico: {e}",
-            file=sys.stderr
-        )
-        raise RuntimeError(f"No se pudo cargar el glosario de etiquetas: {e}")
+def _parsear_json_qwen(texto):
+    """Parsea el JSON que devuelve el modelo, tolerando que lo envuelva en
+    fences markdown (```json ... ```) o texto alrededor."""
+    t = (texto or "").strip()
+    if t.startswith("```"):
+        t = t.strip("`")
+        if t[:4].lower() == "json":
+            t = t[4:]
+        t = t.strip()
+    candidatos = [t]
+    if "{" in t and "}" in t:
+        candidatos.append(t[t.find("{"): t.rfind("}") + 1])
+    for candidato in candidatos:
+        try:
+            return json.loads(candidato)
+        except json.JSONDecodeError:
+            continue
+    raise RuntimeError(f"Qwen no devolvio JSON valido: {texto}")
 
 
-MODELO_GEMINI = "gemini-3.5-flash"  # bajado de 3.8: modelo maduro, menos presion de demanda de lanzamiento reciente
+def llamar_qwen_json(prompt, imagen_bytes=None, api_key=None, sistema=None):
+    """Llama a Qwen (DashScope, endpoint OpenAI-compatible /chat/completions).
+    'sistema' (opcional) va como mensaje de sistema con las reglas; 'prompt' es
+    la instruccion del usuario y la imagen (opcional) va antes que el texto, como
+    recomienda Qwen-VL. temperature=0: lectura de tickets, no creatividad.
+    Devuelve el JSON parseado. Lanza RuntimeError con mensaje claro si algo falla.
 
+    Reintenta ante codigos transitorios (5xx y 429); cualquier otro falla directo.
+    El reintento inmediato es SOLO para la IA - Supabase no se reintenta (si cae,
+    la operacion deriva a pendientes, por decision de diseno)."""
+    if not QWEN_BASE_URL:
+        raise RuntimeError("Falta QWEN_BASE_URL en el entorno (endpoint compatible-mode de DashScope)")
+    if not api_key:
+        raise RuntimeError("Falta DASHSCOPE_API_KEY en el entorno")
 
-REINTENTOS_503 = 3
-ESPERA_ENTRE_REINTENTOS_SEG = 5
+    url = f"{QWEN_BASE_URL}/chat/completions"
+    content = []
+    if imagen_bytes is not None:
+        b64 = base64.b64encode(imagen_bytes).decode()
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+        })
+    content.append({"type": "text", "text": prompt})
 
+    messages = [{"role": "system", "content": sistema}] if sistema else []
+    messages.append({"role": "user", "content": content})
 
-def llamar_gemini_json(parts, api_key):
-    """Llama a Gemini generateContent con las 'parts' ya armadas por el
-    caller (solo texto, o texto+imagen) y devuelve el JSON parseado. Lanza
-    RuntimeError con un mensaje claro si algo falla - cada script decide como
-    reportarlo con su propio error_salir/Telegram.
-
-    Reintenta solo ante 503 (servidores de Google saturados, transitorio y
-    le pasa igual a free que a pago) - cualquier otro codigo falla directo,
-    reintentar no lo arregla."""
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODELO_GEMINI}:generateContent?key={api_key}"
-    body = {
-        "contents": [{"parts": parts}],
-        "generationConfig": {"responseMimeType": "application/json"},
-    }
+    body = {"model": MODELO_QWEN, "messages": messages, "temperature": 0}
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     r = None
-    for intento in range(1, REINTENTOS_503 + 1):
-        r = requests.post(url, json=body, timeout=60)
-        if r.ok or r.status_code != 503 or intento == REINTENTOS_503:
+    for intento in range(1, MAX_INTENTOS_QWEN + 1):
+        r = requests.post(url, headers=headers, json=body, timeout=90)
+        if r.ok or intento == MAX_INTENTOS_QWEN:
             break
-        time.sleep(ESPERA_ENTRE_REINTENTOS_SEG)
+        if r.status_code in (500, 502, 503, 504):
+            time.sleep(ESPERA_QWEN_5XX_SEG)
+            continue
+        if r.status_code == 429:
+            time.sleep(ESPERA_QWEN_429_SEG)
+            continue
+        break  # cualquier otro codigo: reintentar no lo arregla
 
     if not r.ok:
-        raise RuntimeError(f"Gemini rechazo la peticion ({r.status_code}): {r.text}")
+        raise RuntimeError(f"Qwen rechazo la peticion ({r.status_code}): {r.text}")
 
     data = r.json()
     try:
-        texto = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError):
-        raise RuntimeError(f"Respuesta de Gemini con forma inesperada: {data}")
+        texto = data["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError):
+        raise RuntimeError(f"Respuesta de Qwen con forma inesperada: {data}")
 
-    try:
-        return json.loads(texto)
-    except json.JSONDecodeError:
-        raise RuntimeError(f"Gemini no devolvio JSON valido: {texto}")
+    return _parsear_json_qwen(texto)

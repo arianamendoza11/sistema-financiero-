@@ -28,6 +28,7 @@ jobs:
           TIPO_INGESTA: ${{ github.event.client_payload.tipo_ingesta }}
           FECHA: ${{ github.event.client_payload.fecha }}
           MONTO: ${{ github.event.client_payload.monto }}
+          MONTO_EUR: ${{ github.event.client_payload.monto_eur }}
           CUENTA: ${{ github.event.client_payload.cuenta }}
           COMENTARIO: ${{ github.event.client_payload.comentario }}
         run: python scripts/ingesta_estandarizada.py
