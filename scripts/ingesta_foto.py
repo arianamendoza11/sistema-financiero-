@@ -61,8 +61,8 @@ INSTRUCCION_USUARIO = "Lee este ticket y devuelve el JSON."
 
 
 class FotoNoEncontrada(RuntimeError):
-    """La foto ya no existe en Storage (se cumplio la retencion antes de poder
-    procesarla) - no tiene sentido seguir reintentando esta."""
+    """La foto ya no existe en Storage (se cumplio la retencion o se borro):
+    no se puede leer el recibo."""
 
 
 def parsear_categorias(raw):
