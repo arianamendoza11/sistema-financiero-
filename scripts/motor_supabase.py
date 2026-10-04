@@ -178,8 +178,12 @@ def guardar_registro_pendiente(origen, payload, foto_bucket_path=None, error_det
 
 
 def listar_registros_pendientes(solo_reintentables=True):
+    """Pendientes vivos. Los que la rutina nocturna ya resolvio quedan en
+    estado='procesado' hasta la purga diaria y no se vuelven a tocar."""
     url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
-    params = {"reintentable": "eq.true"} if solo_reintentables else {}
+    params = {"estado": "eq.pendiente"}
+    if solo_reintentables:
+        params["reintentable"] = "eq.true"
     r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
     r.raise_for_status()
     return r.json()
@@ -187,10 +191,11 @@ def listar_registros_pendientes(solo_reintentables=True):
 
 def listar_fotos_pendientes_de_borrado():
     """Rutas de Storage que siguen referenciadas en registros_pendientes
-    (origen gasto_foto). Lo usa limpieza_recibos.py para nunca borrar una foto
-    que el sistema todavia necesita."""
+    (origen gasto_foto) sin procesar. Lo usa limpieza_recibos.py para nunca
+    borrar una foto que el sistema todavia necesita; la de un pendiente ya
+    procesado si puede caducar."""
     url = f"{SUPABASE_URL}/rest/v1/registros_pendientes"
-    params = {"origen": "eq.gasto_foto", "select": "foto_bucket_path"}
+    params = {"origen": "eq.gasto_foto", "estado": "eq.pendiente", "select": "foto_bucket_path"}
     r = requests.get(url, headers=REST_HEADERS, params=params, timeout=15)
     r.raise_for_status()
     return {fila["foto_bucket_path"] for fila in r.json() if fila["foto_bucket_path"]}

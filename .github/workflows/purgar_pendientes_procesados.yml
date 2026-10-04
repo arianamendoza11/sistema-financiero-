@@ -1,0 +1,31 @@
+name: Purgar Pendientes Procesados
+
+on:
+  schedule:
+    # 02:30 UTC: 1 h 30 min despues de la rutina nocturna de Claude (01:00 UTC).
+    # Ambos crons van en UTC, asi que la separacion no cambia con el horario de verano.
+    - cron: "30 2 * * *"
+  workflow_dispatch: {}
+
+jobs:
+  purgar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependencias
+        run: pip install requests
+
+      - name: Ejecutar purga
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scripts/purgar_pendientes_procesados.py
