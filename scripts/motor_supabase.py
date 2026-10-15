@@ -163,12 +163,13 @@ def borrar_registros_pendientes_de_foto(foto_bucket_path):
 # --- IA de vision: Qwen via DashScope (endpoint OpenAI-compatible) ---
 # QWEN_BASE_URL (workspace compatible-mode) va como secret en GitHub Actions.
 # El MODELO va aqui en el script como parametro (no como secret - no aporta
-# tenerlo fuera). Opciones: qwen3-vl-flash ($0.05/$0.40 por millon, el mas
-# barato) o qwen3-vl-plus ($0.20/$1.60). El prompt de foto esta disenado para
+# tenerlo fuera). qwen3-vl-flash ya no existe en el workspace (404
+# model_not_found desde 2026-10-11): se usa la serie flash nueva, multimodal.
+# Alternativa mas cara: qwen3-vl-plus ($0.20/$1.60 por millon). El prompt de foto esta disenado para
 # que flash rinda: menu numerado acotado a las categorias del Shortcut, glosario
 # que se impone en codigo y verificacion de importes contra el TOTAL.
 QWEN_BASE_URL = (os.environ.get("QWEN_BASE_URL") or "").rstrip("/")
-MODELO_QWEN = "qwen3-vl-flash"
+MODELO_QWEN = "qwen3.6-flash"
 
 MAX_INTENTOS_QWEN = 3    # intentos totales (1 inicial + 2 reintentos)
 ESPERA_QWEN_5XX_SEG = 5  # 5xx = servidores saturados
